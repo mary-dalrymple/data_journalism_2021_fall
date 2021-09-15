@@ -81,6 +81,13 @@ west_virginia_ppp %>%
   ) %>%
   count(amount_bin)
   
+#alternate method to count
+#
+#group_by(amount_bin) %>% 
+#summarise(
+#  total_loans = n()
+#  ) %>%
+#print(total_loans)
 
 ```
 
