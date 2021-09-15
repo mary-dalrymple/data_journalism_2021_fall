@@ -382,6 +382,8 @@ cleaned_arnold_md_loans
 **Answer** Only one, Arnld.
 
 #Why do you add the TRUE ~ city to the case_when? 
+#This just means any other value not specified should be replaced with itself (no change).
+#Especially important when you're creating a new column, so that you carryforward all the unchanged values.
 
 ```{r}
 # cleaning function
