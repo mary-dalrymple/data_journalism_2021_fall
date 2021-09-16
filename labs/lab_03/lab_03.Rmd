@@ -36,7 +36,7 @@ Q1: Which five cities located in Kanawha County, West Virginia got the most loan
 
 Note: To answer this question, please fully clean the city field for Kanawha County cities. Hint: once cleaned, the dataframe that counts the number of loans by city should have 38 distinct cities for Kanawha County.
 
-A1:Charleston, South Charleston, Saint Albans, Dunbar and Nitro
+A1: Charleston, South Charleston, Saint Albans, Dunbar and Nitro
 
 ```{r}
 
@@ -86,7 +86,7 @@ A2: Jackson Kelly PLLC
 
 The West Virginia zip code with the highest total dollar amount in loans is 25301, located in Charleston. The biggest loan in the county, worth $5,068,472, went to the law offices of Jackson Kelly PLLC. The database reports that the entire loan value would be used for payroll. In June, $5,126,619 of the loan was forgiven, more than was approved. 
 
-The database also reports that the original loan amount was $2,880,600. To understand the discrepancy between the amount forgiven and the amount approved, it might be necessary to trace back the company's loan applications to see if there were multiple applications and whether the $5,126,619 better reflects the law firm's multiple applications, instead of the reported "current approved amount" of $5,068,472. 
+To understand the discrepancy between the amount forgiven and the total amount approved, it might be necessary to trace back the company's loan applications to see if there were multiple applications or an early application. The database also reports that the original loan amount was $2,880,600. If the law firm applied early in the loan program, the extra money forgiven may reflect accumulated interest on earlier loans. 
 
 ```{r}
 # Hint
@@ -118,7 +118,7 @@ Q3: Five business entities owned by the spouse of a member of West Virginia's U.
   * What do the businesses do?
   * How much money did the five businesses receive in total?
   * What percentage of the total loan amount have been forgiven?
-  * How did the U.S. House member vote on the legislation initially author zing the PPP loan program.
+  * How did the U.S. House member vote on the legislation initially authorzing the PPP loan program.
 
 Feel free to add any interesting "color" (little interesting details) you find in your research.  
 
@@ -133,12 +133,29 @@ Some hints to help you answer this question:
 * When you examine the disclosure forms, there may be lots of stock sales and retirement accounts mixed in.  Ignore those. In the table in the disclosure forms, look for "Partnership" or "C-Corp" in the column named "Income Type"
 * This is a link to details on passage of the [CARES ACT](https://www.congress.gov/bill/116th-congress/house-bill/748). You can find a link to how the House voted by clicking on a link from [this page](https://www.congress.gov/bill/116th-congress/house-bill/748/actions).
 
-A3:
+A3: Matt Miller, husband of Rep. Carol Miller, R-W.Va., got PPP loans for the family's chain of car dealerships (Dutch Miller of Charleston, Dutch Miller of Charlotte, Dutch Miller Subaru, Dutch Miller Chevrolet, and DM Motor). In total, the Miller family businesses got $3,105,300, all of it forgiven, with interest. 
+
+Rep. Miller voted for the CARES Act that authorized PPP loans, as well as the two pieces of legislation that expanded the PPP funding. She later voted against the American Rescue Plan, which contained assistance to individuals in the form of child tax credits, mortgage and rental assistance, and extended unemployment benefits. She also voted against a $3.5 billion spending package, complaining on Twitter that it was "chocked full of socialist policies." That did not stop her for submitting earmark requests for local projects worth $2.7 million.
+
+https://twitter.com/RepCarolMiller/status/1430290236903464969
 
 ```{r}
 
 # Hint
 # First, create a dataframe that only has loans to those five companies
+
+miller_wv_ppp_loans <- wv_ppp_loans %>%
+  filter(str_detect(name,"DM MOTOR")| str_detect(name,"DUTCH MILLER") | str_detect(name,"MFM")) 
+
 # Second, use that newly created dataframe to calculate total loan amount and percentage forgiven for those companies
+
+miller_wv_ppp_loans %>%
+  summarise(
+    miller_total = sum(amount),
+    miller_total_forgive = sum(forgiveness_amount)
+  ) %>%
+  mutate(miller_pct_forgive = miller_total_forgive / miller_total)
+  
+
 
 ```
