@@ -163,10 +163,13 @@ maryland_ppp_with_naics_zip %>%
 
 maryland_ppp_with_naics_zip %>%
   filter(NHA == 0 & race == "Asian")
+
+#use groupby to count the actual number of zip codes, which is 3
+
 ```
 
 **Q7** How many industries have exactly one loan in the data (hint: you can filter _after_ using `summarise` on any totals you create). From a newsworthiness standpoint, which of these is most worthy of further exploration, and why?
-**A7** 44 industries had only one business seaking a loan. It's really hard to pick just one for further exploration. Two categories sound like they have a governmental ring to them, "Executive and Legislative Offices" and "Monetary Authorities - Central Bank." I would suspect that governmental authorities would be prohibited from seeking loans. If true, that's a story worth following up on. Then, it's frankly a tie between "Fur-Bearing Animal and Rabbit Production" and "Guided Missile and Space Vehicle Manufacturing." 
+**A7** 44 industries had only one business seeking a loan. It's really hard to pick just one for further exploration. Two categories sound like they have a governmental ring to them, "Executive and Legislative Offices" and "Monetary Authorities - Central Bank." I would suspect that governmental authorities would be prohibited from seeking loans. If true, that's a story worth following up on. Then, it's frankly a tie between "Fur-Bearing Animal and Rabbit Production" and "Guided Missile and Space Vehicle Manufacturing." 
 
 ```{r}
 maryland_ppp_with_naics_zip %>%
