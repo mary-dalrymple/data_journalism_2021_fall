@@ -122,7 +122,7 @@ all_states_table
 
 ```{r}
 # for i in column of states table
-# to to the link/URL
+# go to the link/URL
 # take the row 
 # bind rows to df
 
