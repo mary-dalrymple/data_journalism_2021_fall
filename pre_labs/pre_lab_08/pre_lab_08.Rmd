@@ -106,7 +106,9 @@ And now we calculate the percent change.
 
 
 ```{r}
-alldata %>% mutate(change = ((Population2010-Population2000)/Population2000)*100) %>% arrange(desc(change))
+alldata %>% 
+  mutate(change = ((Population2010-Population2000)/Population2000)*100) %>% 
+  arrange(desc(change))
 ```
 
 You may be asking: hey, wasn't there a 2020 Census? Where's that data? The answer is that it's coming - the Census Bureau has a [schedule of releases](https://www.census.gov/programs-surveys/popest/about/schedule.html).
