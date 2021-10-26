@@ -34,6 +34,8 @@ You'll need your Census API Key:
 
 ```{r echo=FALSE}
 census_api_key("102c0c72d8f8eb880608f9dacb53fdf9100f8ba0")
+# census_api_key("9542395abc1305d2ce38ed41691812fbfdabc97e")
+# mine, broken
 ```
 
 ## Load and view ACS variables
