@@ -147,6 +147,9 @@ To answer those questions, make a codeblock and do the following:
 
 The colored line displaying the relationship between loan amount and forgiveness amount splits the angle roughly in half, further demonstrating the split between all-or-nothing forgiveness. 
 
+**Edited to remove regression line and add labels describing 100% forgiven and none forgiven to convey less data nerd information, more newsworthy information.
+
+
 ```{r}
 
 wv_ppp$forgiveness_amount[is.na(wv_ppp$forgiveness_amount)] <- 0
@@ -156,14 +159,16 @@ wv_ppp_small <- wv_ppp %>%
 
 wv_ppp_small %>% ggplot() +
   geom_point(aes(x=amount, y=forgiveness_amount), size=0.5) +
-  geom_smooth(aes(x=amount, y=forgiveness_amount), method=lm, se=FALSE, color="#1ABC9C") +
+  # geom_smooth(aes(x=amount, y=forgiveness_amount), method=lm, se=FALSE, color="#1ABC9C") +
   theme_few() +
   labs(
     title = "PPP Loan Amount vs Forgiveness Amount",
     x = "loan amount", 
     y = "amount forgiven",
     caption = "Source: Small Business Administration"
-  )
+  ) + 
+  annotate("text", x = 25000, y = 25000, label = "100% forgiven", vjust=1, hjust=1.5) +
+  annotate("text", x = 25000, y = 0, label = "none forgiven", vjust=1, hjust = 1)
 
 
 
