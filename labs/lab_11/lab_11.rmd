@@ -1,0 +1,266 @@
+---
+title: "lab_11"
+author: "sean mussenden"
+date: "8/26/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen=999)
+```
+
+## You will need
+
+* A Census API key
+
+## Load libraries and establish settings
+
+**Task** Create a codeblock and load appropriate packages and settings for this lab. You'll need tidyverse, tidycensus, janitor, sf and tigris, and you'll also need to install your census API key.
+
+```{r}
+library(tidyverse)
+library(tidycensus)
+library(janitor)
+library(sf)
+library(tigris)
+library(stringr)
+library(RColorBrewer)
+```
+
+**Task** Create a codeblock and load the WV slice of the PPP loan data, which is in the data folder and is called lab_11.rds.
+
+```{r}
+wv_ppp <- read_rds("data/lab_11.rds")
+
+```
+
+## Questions 
+
+**Q1.** You are interested in doing some reporting on how West Virginia companies in the "Mining, Quarrying, and Oil and Gas Extraction" industry (https://www.naics.com/six-digit-naics/?code=21) used PPP loans during the pandemic (West Virginia is a big coal mining state).  
+
+Then produce a choropleth map that shows West Virginia counties shaded according to the total amount [this means dollars] of loans to that industry per 100,000 population. 
+
+Use the magma color palette, and shade on a "log" scale. Also produce a table that shows the total amount of loans per 100,000 population for each county, ranked from highest to lowest, along with the total amount of loans and the total number of loans. 
+
+# rabbit hole - how do you convert to title case instead of upper?
+
+```{r}
+wv_ppp_coal <- wv_ppp %>%
+  filter(naics_code > 210000 & naics_code < 219999) %>%
+  group_by(project_county_name) %>%
+  summarise( coal_loans = n(), coal_loans_amt = sum(amount))
+
+wv_county_population <- get_acs(geography = "county", 
+              variables = c(population = "B01001_001"), 
+              state = "WV")
+
+wv_county_population <- wv_county_population %>%
+  rename(COUNTY = NAME) %>%
+  select(-GEOID, -moe, -variable) %>%
+  mutate(COUNTY = toupper(str_remove_all(COUNTY,", West Virginia|County"))) %>%
+  mutate(COUNTY = str_trim(COUNTY,side="both"))
+
+wv_ppp_coal <- wv_ppp_coal %>%
+  rename(COUNTY = project_county_name)
+
+wv_ppp_coal_bypop <- wv_county_population %>%
+  left_join(wv_ppp_coal, by="COUNTY") %>%
+  mutate(coal_loans = replace_na(coal_loans,0)) %>%
+  mutate(coal_loans_amt = replace_na(coal_loans_amt,0)) %>%
+  mutate(loans_per_100k = (coal_loans/estimate) * 100000) %>%
+  mutate(loanamt_per_100k = (coal_loans_amt/estimate) * 100000) %>%
+  mutate(loanamt_per_capita = (coal_loans_amt/estimate)) %>%
+  arrange(desc(loanamt_per_100k))
+
+wv_ppp_coal_bypop
+
+```
+
+
+```{r}
+# starting point
+# counties <- counties() 
+
+wv_counties <- counties %>%
+  filter(STATEFP == "54") %>%
+  select(NAME, )
+
+wv_counties %>%
+  ggplot() + 
+  geom_sf() + 
+  theme_minimal()
+
+```
+
+```{r}
+wv_counties_forcoal <- wv_counties %>%
+  rename(COUNTY = NAME) %>%
+  mutate(COUNTY = toupper(COUNTY)) %>%
+  mutate(COUNTY = str_trim(COUNTY,side="both"))
+
+wv_ppp_coal_bypop_map <- wv_ppp_coal_bypop %>%
+  left_join(wv_counties_forcoal, by="COUNTY")
+
+```
+
+
+```{r}
+#Not the map you're looking for. Keep going...
+
+ggplot() + 
+  geom_sf(data=wv_counties, fill="white") + 
+  geom_sf(data=wv_ppp_coal_bypop_map, aes(fill=loans_per_100k, geometry=geometry)) +
+  scale_fill_viridis_b(option="magma", trans="log") + 
+  theme_minimal() +
+  ggtitle("Count of Coal Industry Loans per 100k")
+
+```
+
+
+```{r}
+ggplot() + 
+  geom_sf(data=wv_counties, fill="white") + 
+  geom_sf(data=wv_ppp_coal_bypop_map, aes(fill=loanamt_per_100k, geometry=geometry)) +
+  scale_fill_viridis_b(option="magma", trans="log") + 
+  theme_minimal() +
+  ggtitle("Dollars in Coal Industry Loans per 100k")
+
+```
+```{r}
+
+# I'm now just making maps for the fun of it...
+# would be interesting to compare per capita loan amount to companies vs pay & job retention for actual coal miners
+
+ggplot() + 
+  geom_sf(data=wv_counties, fill="white") + 
+  geom_sf(data=wv_ppp_coal_bypop_map, aes(fill=loanamt_per_capita, geometry=geometry)) +
+  scale_fill_viridis_b(option="magma", trans="log") + 
+  theme_minimal() +
+  ggtitle("Dollars in Coal Industry Loans per Capita")
+
+```
+
+```{r}
+# tangent...
+
+wv_coal_jobs <-wv_ppp %>%
+  filter(naics_code > 210000 & naics_code < 219999) %>%
+  summarise(coal_jobs = sum(jobs_retained))
+wv_coal_jobs
+
+loan_dollars_coal <- wv_ppp_coal_bypop %>%
+  summarise(total_coal_amt = sum(coal_loans_amt))
+loan_dollars_coal
+
+dollars_per_coal_job = loan_dollars_coal/wv_coal_jobs
+dollars_per_coal_job
+
+# WV coal businesses got $13,856 in loan dollars for each reported job saved. How many of the 6,459 jobs were protected? How much of this money made its way into paychecks? 
+
+```
+
+
+
+Then answer these questions:
+
+* Based on the map, what region of the state appears to have gotten more loans in this industry? What geographic pattern do you notice in the data?
+
+**A1-1.** Ritchie County got the most loan dollars. Following Ritchie, the whole stretch that runs the length of the west side of the Appalachian Mountains got a higher dollar amount of loans per 100,000 people than other areas of the state.
+
+* Based on the table, what county got the highest total loan amount? What was the total amount per 100K population, the total amount of loans (not population adjusted), how many loans were there, and what's the population?
+
+```{r}
+wv_ppp_coal_bypop %>%
+  filter(COUNTY == "HARRISON")
+```
+
+
+**A1-2.** Harrison County got the highest total loan amount at $9,919,763, or $14,607,650 per 100,000 people. Businesses in the county got 59 loans; the county has an estimated population of 67,908. ($146.08 per capita!)
+
+**Q2.** You want to understand WHY the spatial pattern you saw above exists.  So you grab a shapefile with the latitude and longitude coordinates of every mine permit in West Virginia from the state Department of Environmental Protection. 
+
+Here's the url: https://tagis.dep.wv.gov/arcgis/rest/services/WVDEP_enterprise/mining_reclamation/MapServer/0/query?where=1%3D1&outFields=*&geometry=&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outSR=4326&f=json. 
+
+(It's in a slightly different format than the .shp file in the lab. It's another type of shapefile called "geojson".  It will work just the same, though, despite that difference. You can read it directly into R without manually downloading it, by putting the url in the st_read() function we learned about in this week's prelab.) 
+
+```{r}
+wv_mines <- st_read("https://tagis.dep.wv.gov/arcgis/rest/services/WVDEP_enterprise/mining_reclamation/MapServer/0/query?where=1%3D1&outFields=*&geometry=&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outSR=4326&f=json")
+```
+
+This data includes both currently operating mines and old ones that have closed.  You want to examine only mines that have a permit expiration date after Sept. 1, 2021. 
+
+```{r}
+wv_mines_open <- wv_mines %>%
+  mutate(`expiredate` = as.Date(`expiredate`, "%Y/%m/%d")) %>%
+  filter(expiredate > "2021-09-01")
+
+```
+
+
+Make a map with a point for each one of these mine permits and put a blank map with the outline of West Virginia counties (which you can get from Tigris) behind it. 
+
+```{r}
+ggplot() + 
+  geom_sf(data=wv_counties, fill="white") + 
+  geom_sf(data=wv_mines_open, aes(geometry=geometry), size = 0.75) +
+  theme_minimal() +
+  ggtitle("West Virginia Mines")
+  
+```
+
+What spatial pattern do you see? How does it compare to the spatial pattern in the first map you made?
+
+**A2.** The cluster in the southwest-ish portion of the state matches the swath of loan dollars along the Appalachian, but the density of mining activity gets thinner than I expected as you move from the southwest to the northeast.
+
+**Q3.** To confirm the spatial comparison you identified in question 2, let's create a new map that layers the mine location points on top of our PPP choropleth map we created in question 1. What do you notice about the amount of mines in the county that has the highest total loan amount per 100K?
+
+```{r}
+ggplot() + 
+  geom_sf(data=wv_counties, fill="white") + 
+  geom_sf(data=wv_ppp_coal_bypop_map, aes(fill=loanamt_per_100k, geometry=geometry)) +
+  scale_fill_viridis_b(option="magma", trans="log") + 
+  geom_sf(data=wv_mines_open, aes(geometry=geometry), size = 0.75) +
+  theme_minimal() +
+  ggtitle("West Virginia Mines and PPP Loans per 100k")
+  
+```
+
+```{r}
+# curious. plotting against per capita map
+
+ggplot() + 
+  geom_sf(data=wv_counties, fill="white") + 
+  geom_sf(data=wv_ppp_coal_bypop_map, aes(fill=loanamt_per_capita, geometry=geometry, trans="log")) +
+  scale_fill_viridis_b(option="magma", trans="log") + 
+  geom_sf(data=wv_mines_open, aes(geometry=geometry), size = 0.75) +
+  theme_minimal() +
+  ggtitle("West Virginia Mines and PPP Loan Dollars per Capita")
+  
+```
+
+**A3.** Zero mines in the county with the highest total loan amount per 100,000 people, or per capita. (Corporate headquarters?) 
+
+**Q4.** Starting from the original WV ppp dataframe, examine the loans to companies in "Mining, Quarrying, and Oil and Gas Extraction" in the county with the highest total loan amount per 100K (you can use the table you created in question 1 to identify the top county)?
+
+```{r}
+wv_ppp_top_coal <- wv_ppp %>%
+  filter(naics_code > 210000 & naics_code < 219999) %>%
+  filter(project_county_name == "RITCHIE") %>%
+  arrange(desc(amount))
+
+wv_ppp_top_coal
+```
+
+
+* What single company accounts for the biggest chunk of the total loan amount? 
+* What specific industry are they in, based on their 6-digit NAICS code? Look them up on the web. What services do they provide?
+* How many jobs did they save, according to the data?
+* What's your hypothesis for why a company in their specific industry would need to seek a PPP loan during the pandemic?
+
+**A4.** Hall Drilling accounts for the biggest loan. They're in the business of drilling oil and gas wells, per the NAICS code. The lawsuits describe their activities as fracking. Hall Drilling advertises themselves as a full service oil and gas operation -- drilling, well maintenance, trucking and cleanup. They said they saved 387 jobs. They still advertise having more than 300 employees (and they're hiring).
+
+The pandemic caused a huge and sudden drop in energy demands, especially manufacturing and commercial energy needs, and that would cause shock to many types of energy companies, forcing them to lay off workers without PPP loans. Expecting energy demands to ramp back up eventually, it would be virtually impossible for a large operation to lay off workers and then try to rehire and retrain to meet potentially surging demand at some future date. I don't know anything about fracking, but I hope that it's the case that they kept people on the job to avoid the environmental consequences (which I'm presuming are bad, but don't really know) of walking away from active operations.
+
+
+-30-
