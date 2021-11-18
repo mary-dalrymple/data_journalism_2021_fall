@@ -1,0 +1,308 @@
+---
+title: "lab_12"
+author: "derek willis"
+date: "11/16/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## You will need
+
+* A Census API key
+* Our usual libraries, plus the geographic ones
+
+## Load libraries and establish settings
+
+**Task** Create a codeblock and load appropriate packages and settings for this lab.
+
+```{r}
+# Turn off scientific notation
+options(scipen=999)
+```
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(lubridate)
+library(ggrepel)
+library(sf)
+```
+
+
+## Questions
+
+**Q1.** You are interested in tracking vaccinations by age group, and in particular how many children are being vaccinated over time. You want to generate a sentence that describes the daily change in first daily dose among children between 5-11 years old, and also compares it to the most recent same day of the week, describing the change in percentage terms and the direction of the change.
+
+Using [CSV data posted by the state](https://raw.githubusercontent.com/state-of-maryland/VaccineCSVs/master/MD_COVID19_VaccinationPercentAgeGroupPopulation.csv), making the column names more readable and ensuring each day is formatted as a date column that ONLY contains the date, not a time.
+
+```{r}
+vax_byage <- read_csv("https://raw.githubusercontent.com/state-of-maryland/VaccineCSVs/master/MD_COVID19_VaccinationPercentAgeGroupPopulation.csv") %>%
+  clean_names() %>%
+  mutate(vaccination_date = date(mdy_hms(vaccination_date)))
+
+vax_byage
+```
+
+
+Then write code that will construct the sentence about the data described above comparing the most recent data to the previous date and the most recent previous date for the same day of the week. To do that, you will need:
+
+1. A dataframe with vaccination data for the under-12 age group.
+
+```{r}
+# identifying age ranges
+vax_byage %>%
+  group_by(age_range) %>%
+  summarise(rowsbyage = n())
+
+vax_11andunder <- vax_byage %>%
+  filter(age_range == "11 and Under")
+
+vax_11andunder
+
+# 17 rows in df matches group_by
+
+```
+
+
+
+2. A column in your dataframe that contains the day of the week that each date represents (you may need to google how to do that).
+
+```{r}
+vax_11andunder$weekday <- weekdays(vax_11andunder$vaccination_date)
+
+```
+
+
+3. Data from the previous day and the most recent previous same day of the week.
+
+```{r}
+#most recdent
+
+vax_11under_descending <- vax_11andunder %>%
+  arrange(desc(vaccination_date))
+
+vax_most_recent <- vax_11under_descending %>%
+  slice(1)
+
+vax_most_recent
+
+#day before
+
+vax_day_before <- vax_11under_descending %>%
+  slice(2)
+  
+vax_day_before
+
+#a week ago
+vax_weekday_prior <- vax_11under_descending %>%
+  filter(vaccination_date == vax_most_recent$vaccination_date - 7)
+
+vax_weekday_prior
+
+# matches on weekday
+
+```
+
+
+4. The percentage changes compared to the previous day and most recent previous same day of the week.
+
+```{r}
+
+vax_deltas <- vax_most_recent %>%
+  mutate(pct_change_yesterday = (round(1000*(first_daily_dose - vax_day_before$first_daily_dose)/vax_day_before$first_daily_dose))/10) %>%
+  mutate(pct_change_weekbefore = (round(1000*(first_daily_dose - vax_weekday_prior$first_daily_dose)/vax_weekday_prior$first_daily_dose))/10)
+
+vax_deltas
+
+```
+
+
+5. A template for your sentence using paste.
+
+```{r}
+
+# sentence text
+# The number of children aged 5 to 11 who got their first dose of the COVID-19 vaccine went (up/down) XX% compared to yesterday, (up/down) XX% from the same day a week ago.
+
+## used abs() to set absolute values of numbers and elminiate the double negative
+
+pointer_1 <- if_else(vax_deltas$pct_change_yesterday > 0, "up", "down")
+pointer_2 <- if_else(vax_deltas$pct_change_weekbefore > 0, "up", "down")
+
+boilerplate <- paste("The number of children aged 5 to 11 who got their first dose of the COVID-19 vaccine on",  vax_most_recent$weekday, "was", pointer_1, abs(vax_deltas$pct_change_yesterday), "percent from", vax_day_before$weekday, "and", pointer_2, abs(vax_deltas$pct_change_weekbefore), "percent from", vax_weekday_prior$weekday, "a week ago.", sep=" ")
+
+boilerplate
+
+```
+
+Put your sentence in the answer below.
+
+**A1.** "The number of children aged 5 to 11 who got their first dose of the COVID-19 vaccine on Tuesday was down 32 percent from Monday and down 62.5 percent from Tuesday a week ago."
+
+
+**Q2.** Maryland produces a [CSV file](https://raw.githubusercontent.com/state-of-maryland/VaccineCSVs/master/Vax_ZIP_CODE_FirstSecondSingle_Totals_Raw.csv) showing the total number of vaccinations by zip code and -- interestingly -- it includes non-Maryland zip codes (as well as some zip codes that seem to be bad data). write a script that reads the CSV file, making the columns more readable and adding today's date. 
+
+```{r}
+vax_maryland <- read_csv("https://raw.githubusercontent.com/state-of-maryland/VaccineCSVs/master/Vax_ZIP_CODE_FirstSecondSingle_Totals_Raw.csv") %>%
+  clean_names() %>%
+  mutate(file_date = today())
+
+vax_maryland
+
+```
+
+
+To do that, you will need to:
+
+1. Get rid of rows that do not have data for fully vaccinated people
+
+```{r}
+vax_maryland <- vax_maryland %>%
+  filter(!is.na(fully_vaccinated))
+
+```
+
+
+2. Remove any rows where the zip code is less than five digits (there are several ways you could do this).
+
+```{r}
+vax_maryland_zipclean <- vax_maryland %>%
+  filter(zip_code >= 10000)
+
+```
+
+
+3. Figure out the "lowest" and "highest" Maryland zip codes.
+
+```{r}
+# found two sources, 20588 - 21930 and 20601 - 20930. "lowest" zip in file is 20588
+# these do not sum <- fixed.
+
+vax_maryland_only <- vax_maryland_zipclean %>%
+  filter(zip_code >= 20588 & zip_code <= 21930)
+
+vax_notmaryland <- vax_maryland_zipclean %>%
+  filter(zip_code < 20588 | zip_code > 21930)
+  
+```
+
+Then output the top 25 Maryland zip codes and top 25 non-Maryland zip codes based on number of people fully vaccinated, ...
+
+```{r}
+top_25_vax_maryland_only <- vax_maryland_only %>%
+  arrange(desc(fully_vaccinated)) %>%
+  slice (1:25)
+
+top_25_vax_maryland_only
+
+top_25_vax_notmaryland <- vax_notmaryland %>%
+  arrange(desc(fully_vaccinated)) %>%
+  slice(1:25)
+
+top_25_vax_notmaryland
+  
+```
+
+... and write both dataframes out to CSV files, using the following name formats:
+
+Maryland zips: maryland_zips_yyyymmdd.csv
+Non-Maryland zips: non_maryland_zips_yyyymmdd.csv
+
+Where yymmdd is from today's date. You MUST do this programmatically so that it can run every day without being updated. Be sure to add those two files to your GitHub repository.
+
+```{r}
+# putting this all into one-ish script and then writing out the files
+
+date_stamp <- paste(format(today(),"%y%m%d"))
+
+maryland_vax <- read_csv("https://raw.githubusercontent.com/state-of-maryland/VaccineCSVs/master/Vax_ZIP_CODE_FirstSecondSingle_Totals_Raw.csv") %>%
+  clean_names() %>%
+  mutate(file_date = today()) %>%
+  filter(!is.na(fully_vaccinated)) %>%
+  filter(zip_code >= 10000)
+
+marylandzip_vax <- maryland_vax %>%
+  filter(zip_code >= 20588 & zip_code <= 21930) %>%
+  arrange(desc(fully_vaccinated)) %>%
+  slice (1:25) %>%
+  write_csv(paste0("maryland_zips_",date_stamp,".csv"))
+
+notmarylandzip_vax <- maryland_vax %>%
+  filter(zip_code < 20588 | zip_code > 21930) %>%
+  arrange(desc(fully_vaccinated)) %>%
+  slice (1:25) %>%
+  write_csv(paste0("non_maryland_zips_",date_stamp,".csv"))
+
+```
+
+
+Google the top 2-3 zip codes from both Maryland and non-Maryland results and describe them in your answer.
+
+**A2.** The top fully vaccinated ZIP in Maryland (20906) contains Leisure World. I don't think that's a coincidence. The three most vaccinated zip codes in Maryland cover northwest, mostly residential, outer suburbs. The top non-Maryland zip on the Maryland is a residential area on the DC border with Maryland (easy transit to Maryland for vaccination), followed by two gentrified residential areas, perhaps populated by people who work in Maryland. 
+
+
+**Q3.** Maryland has had one of the more successful vaccination rates, but you want to understand where a significant portion of the population remains less than fully vaccinated. Make a dataframe of all Maryland zip codes from the vaccination data you used in Q2 and join it to Maryland zip code population data from the Census API. 
+
+```{r}
+library(tidycensus)
+```
+
+```{r}
+marylandzip_vax_all <- maryland_vax %>%
+  filter(zip_code >= 20588 & zip_code <= 21930) %>%
+  mutate(zip_code = as.character(zip_code))
+
+maryland_zips_census <- get_acs(
+  geography = "zcta",
+  variable = "B01001_001",
+  state = "Maryland"
+)
+
+maryland_pop <- maryland_zips_census %>%
+  select(-moe, -variable, -NAME) %>%
+  rename(zip_code = GEOID)
+
+maryland_vax_bypop <- maryland_pop %>%
+  left_join(marylandzip_vax_all, by = "zip_code") %>%
+#  select(-file_date) %>%
+  filter(estimate > 0) %>%   #drop rows that result in "inf" vax
+#  replace(is.na(.), 0) %>%
+  mutate(pct_vax = (round(1000*fully_vaccinated/estimate))/10) %>% 
+  filter(pct_vax <= 50)
+
+
+```
+
+Calculate the percentage of fully vaccinated for each zip code and then make a map showing the zip codes with less than 50 percent fully vaccinated. Put a blank map with the outline of Maryland counties (which you can get from Tigris) behind it for context. Add a label to the map describing what the data is and include the date from the vaccination data (programmatically, so you can run it every day).
+
+```{r}
+library(tigris)
+
+zcta_md <- zctas(year=2010, state="Maryland")
+options(tigris_use_cache = TRUE)
+
+lowvax_md_counties <-zcta_md %>%
+  left_join(maryland_vax_bypop, by = c("ZCTA5CE10" = "zip_code"))
+
+```
+
+```{r}
+ggplot() +
+  geom_sf(data=lowvax_md_counties, aes(fill=pct_vax)) +
+  scale_fill_viridis_c(option = "plasma", trans = "sqrt") +
+  #scale_fill_viridis_c(na.value="white") + #works but hard on the eyes
+  theme_void() +
+  labs(title = paste("Maryland ZIP codes less than 50% fully vaccinated as of ", format(marylandzip_vax_all$file_date[1],"%m/%d/%y"), sep=""), hjust=1) +
+  theme(plot.title = element_text(hjust = 0.25))
+```
+
+
+
+You WILL need to ensure that the columns you use to join the two dataframes are the same datatype and remember that join order matters.
+
+Describe the output of the map below, and say what you think the most interesting areas are.
+
+**A3.** Much of the border with Delaware is less than 50 percent vaccinated, and so is Western Maryland. I hypothesize two possible reasons. It could be easier to travel to the bordering state for the closest vaccination clinic, a theory I believe probably applies more to the regions that border Delaware than Pennsylvania and West Virginia. Or, enthusiasm for vaccination in these more rural counties is lower. Some of the more remote southern counties may have more hurdles getting the vaccines than larger, metropolitan regions.
