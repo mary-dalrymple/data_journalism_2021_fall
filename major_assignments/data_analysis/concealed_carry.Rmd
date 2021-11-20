@@ -1,0 +1,114 @@
+---
+title: "Untitled"
+author: "Mary Dalrymple"
+date: "11/20/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen=999)
+```
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(ggthemes)
+library(RColorBrewer)
+library(lattice)
+library(tidycensus)
+```
+
+
+```{r}
+
+wapo_police_shootings <- read.csv("fatal-police-shootings-data.csv")
+wapo_police_shootings
+
+# https://en.wikipedia.org/wiki/Concealed_carry_in_the_United_States
+
+unrestricted_concealed_carry <- wapo_police_shootings %>%
+  filter(state %in% c("AK", "AZ", "AR", "ID", "IA", "KS", "KY", "ME", "MS", "MT", "NH", "ND", "OK", "SD", "TN", "TX", "UT", "VT", "WV","WY")) %>%
+  group_by(state) %>%
+  summarise(shootings = n())
+
+unrestricted_concealed_carry
+
+```
+
+This is the inverse - states with any kind of restriction on concealed carry. 
+
+```{r}
+
+# https://en.wikipedia.org/wiki/Concealed_carry_in_the_United_States
+
+anyrestricted_concealed_carry <- wapo_police_shootings %>%
+  filter(!state %in% c("AK", "AZ", "AR", "ID", "IA", "KS", "KY", "ME", "MS", "MT", "NH", "ND", "OK", "SD", "TN", "TX", "UT", "VT", "WV","WY")) %>%
+  group_by(state) %>%
+  summarise(shootings = n())
+
+anyrestricted_concealed_carry
+
+```
+```{r}
+vars <- load_variables(year = 2019,
+                       dataset = "acs1",
+                       cache = TRUE)
+```
+
+```{r}
+state_pops <- get_acs(geography = "state",
+                      variables = "B01001_001")
+
+state_pops <- state_pops %>%
+  select(-variable, -moe)
+
+state_pops
+
+state_abbreviations <- read_csv("name-abbr.csv")
+state_abbreviations
+```
+
+```{r}
+
+state_pop_abbrev <- state_pops %>%
+  inner_join(state_abbreviations, by = c("NAME" = "state"))
+
+state_pop_shootings_unrestricted <- state_pop_abbrev %>%
+  left_join(unrestricted_concealed_carry, by = c("abbreviation" = "state"))
+
+state_pop_shootings_unrestricted <- state_pop_shootings_unrestricted %>%
+  filter(shootings > 0) %>%
+  mutate(shootings_percapita = shootings/estimate) %>%
+  mutate(shootings_per100k = shootings_percapita * 100000) %>%
+  arrange(desc(shootings_per100k))
+
+state_pop_shootings_unrestricted 
+
+mean(state_pop_shootings_unrestricted$shootings_per100k)
+
+```
+
+```{r}
+anyrestricted_concealed_carry
+
+state_pop_shootings_anyrestrict <- state_pop_abbrev %>%
+  left_join(anyrestricted_concealed_carry, by = c("abbreviation" = "state"))
+
+state_pop_shootings_anyrestrict <- state_pop_shootings_anyrestrict %>%
+  filter(shootings > 0) %>%
+  mutate(shootings_percapita = shootings/estimate) %>%
+  mutate(shootings_per100k = shootings_percapita * 100000) %>%
+  arrange(desc(shootings_per100k))
+
+state_pop_shootings_anyrestrict
+
+mean(state_pop_shootings_anyrestrict$shootings_per100k)
+
+```
+
+This analysis separated the states into two groups -- one group allows unrestricted, aka "constitutional," concealed carry laws; one that has concealed carry restrictions of any kind. States with unrestricted concealed carry have a higher rate of shootings -- 2.9 per 100,000 people -- than states with any kind of restriction on concealed carry -- 2.0 per 100,000 people. 
+
+However, it's also interesting that the two states with the highest rate of police shootings per 100,000 people don't belong to the same group. Alaska, with 6.4 shootings per 100,000 people is an unrestricted open carry state. New Mexico, also with 6.4 shootings per 100,000 people, is not an unrestricted concealed carry state. 
