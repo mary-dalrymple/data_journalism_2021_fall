@@ -19,6 +19,8 @@ library(ggthemes)
 library(RColorBrewer)
 library(lattice)
 library(tidycensus)
+library(janitor)
+library(corrr)
 ```
 
 
@@ -26,6 +28,71 @@ library(tidycensus)
 
 wapo_police_shootings <- read.csv("fatal-police-shootings-data.csv")
 wapo_police_shootings
+
+```
+
+## Per 100k Rate of Police Shootings
+
+To normalize the rate of police shootings by state, we calculate the number of police shootings per 100,000 residents. 
+
+```{r}
+
+# group shootings by state
+
+wapo_police_shootings_bystate <- wapo_police_shootings %>%
+  group_by(state) %>%
+  summarise(shootings = n())
+
+```
+
+```{r}
+# load census variables
+
+vars <- load_variables(year = 2019,
+                       dataset = "acs1",
+                       cache = TRUE)
+```
+
+```{r}
+# get state populations; join with state 2-letter abbreviations
+
+state_pops <- get_acs(geography = "state",
+                      variables = "B01001_001")
+
+state_pops <- state_pops %>%
+  select(-variable, -moe)
+state_pops
+
+state_abbreviations <- read_csv("name-abbr.csv")
+state_abbreviations
+
+state_pop_abbrev <- state_pops %>%
+  inner_join(state_abbreviations, by = c("NAME" = "state"))
+
+```
+
+```{r}
+wapo_police_shootings_per100k <- state_pop_abbrev %>%
+  left_join(wapo_police_shootings_bystate, by = c("abbreviation" = "state")) %>%
+  mutate(shootings_percapita = shootings/estimate) %>%
+  mutate(shootings_per100k = shootings_percapita * 100000) %>%
+  arrange(desc(shootings_per100k))
+
+wapo_police_shootings_per100k
+  
+```
+
+New Mexico and Alaska stand apart from all other states with 6.4 police shootings per 100,000 residents. Why do these two states stand apart, with the next highest rate below 5 per 100,000 people? Both could be said to have disbursed, mostly rural populations, but they're not especially different than other Western states in that regard. What do New Mexico and Alaska have in common with each other, that's different from other states, that causes them to lead the nation in police shootings? 
+
+## Gun Laws
+
+Do gun laws effect the rate of shootings by state? The analysis below looks at concealed carry and open carry laws by state (leaning on Wikipedia summaries). It divides states in to two sets -- unrestricted (concealed carry or open carry) vs any level of restriction (concealed carry or open carry) and asks whether there's a significant difference in shootings between unrestricted and restricted groupings.  
+
+### Concealed Carry
+
+```{r}
+
+# States with unrestricted (aka constitutional) concealed carry.
 
 # https://en.wikipedia.org/wiki/Concealed_carry_in_the_United_States
 
@@ -38,9 +105,9 @@ unrestricted_concealed_carry
 
 ```
 
-This is the inverse - states with any kind of restriction on concealed carry. 
-
 ```{r}
+
+# Inverse - states with any kind of restriction on concealed carry. 
 
 # https://en.wikipedia.org/wiki/Concealed_carry_in_the_United_States
 
@@ -52,29 +119,11 @@ anyrestricted_concealed_carry <- wapo_police_shootings %>%
 anyrestricted_concealed_carry
 
 ```
-```{r}
-vars <- load_variables(year = 2019,
-                       dataset = "acs1",
-                       cache = TRUE)
-```
 
-```{r}
-state_pops <- get_acs(geography = "state",
-                      variables = "B01001_001")
-
-state_pops <- state_pops %>%
-  select(-variable, -moe)
-
-state_pops
-
-state_abbreviations <- read_csv("name-abbr.csv")
-state_abbreviations
-```
 
 ```{r}
 
-state_pop_abbrev <- state_pops %>%
-  inner_join(state_abbreviations, by = c("NAME" = "state"))
+# calculate per 100k shootings
 
 state_pop_shootings_unrestricted <- state_pop_abbrev %>%
   left_join(unrestricted_concealed_carry, by = c("abbreviation" = "state"))
@@ -109,6 +158,87 @@ mean(state_pop_shootings_anyrestrict$shootings_per100k)
 
 ```
 
-This analysis separated the states into two groups -- one group allows unrestricted, aka "constitutional," concealed carry laws; one that has concealed carry restrictions of any kind. States with unrestricted concealed carry have a higher rate of shootings -- 2.9 per 100,000 people -- than states with any kind of restriction on concealed carry -- 2.0 per 100,000 people. 
+We find a difference in the average (mean) rate of shootings between states with unrestricted concealed carry laws and any restrictions on concealed carry. States with unrestricted laws have an average of 2.9 shootings per 100,000 people in the database, compared with 2.0 per 100,000 people for states with any kind of restriction on concealed carry.
 
-However, it's also interesting that the two states with the highest rate of police shootings per 100,000 people don't belong to the same group. Alaska, with 6.4 shootings per 100,000 people is an unrestricted open carry state. New Mexico, also with 6.4 shootings per 100,000 people, is not an unrestricted concealed carry state. 
+"Any restriction" includes states that require a license and/or permit to carry a concealed weapon, and those that do not allow carrying of concealed weapons. 
+
+However, it's also interesting that the two states with the highest rate of police shootings per 100,000 people, which we identified in the per capita analysis above, don't belong to the same group. Alaska, with 6.4 shootings per 100,000 people is an unrestricted open carry state. New Mexico, also with 6.4 shootings per 100,000 people, is not an unrestricted concealed carry state. 
+
+Is the difference between the unrestricted and restricted groups statistically significant?
+
+```{r}
+# add column with boolean for restrictions on concealed carry
+
+state_pop_shootings_unrestricted <- state_pop_shootings_unrestricted %>%
+  add_column(conc_carry_restrict = 0)
+  
+```
+
+```{r}
+state_pop_shootings_anyrestrict <- state_pop_shootings_anyrestrict %>%
+  add_column(conc_carry_restrict = 1)
+```
+
+```{r}
+shootings_concealed_carry <- rbind(state_pop_shootings_unrestricted, state_pop_shootings_anyrestrict)
+
+```
+
+```{r}
+t.test(shootings_per100k ~ conc_carry_restrict, data = shootings_concealed_carry)
+```
+
+The t-test suggests that higher average rate of police shootings in states with unrestricted concealed carry laws is significant (at p-value = 0.0161). 
+
+## Open Carry
+
+In a similar manner, we divide the states by whether they have unrestricted open carry laws, or any restriction on open carry, to see if it has a significant relationship to the average number of shootings by state. 
+
+```{r}
+# https://en.wikipedia.org/wiki/Open_carry_in_the_United_States
+# add a column for open carry laws
+
+shootings_gun_laws <- shootings_concealed_carry %>%
+  add_column(open_carry_restrict = 0)
+
+```
+
+```{r}
+# set open_carry_restrict to 1 for states that do not have "permissive" aka permitless open carry laws
+# 21 total
+
+shootings_gun_laws <- shootings_gun_laws %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "CA", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "CO", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "CT", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "DC", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "FL", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "GA", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "HI", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "IL", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "IN", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "MD", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "MA", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "MN", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "MO", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "NE", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "NJ", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "NY", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "ND", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "OR", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "PA", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "RI", 1, open_carry_restrict)) %>%
+  mutate(open_carry_restrict = ifelse(abbreviation == "SC", 1, open_carry_restrict))
+
+```
+
+
+```{r}
+t.test(shootings_per100k ~ open_carry_restrict, data = shootings_gun_laws)
+```
+
+There's a stronger significance and bigger difference in means between states when open carry laws are compared. States with no restrictions on open carry (also known as permitless open carry), have an average of 2.8 shootings per 100,000 residents, meaningfully higher than the 1.8 average shootings per 100,000 people in the states with any restriction on open carry. (In this analysis, any restriction includes states with statewide or local licensing requirements, open carry only permitted in limited circumstances, or no open carry permitted.) Permitless open carry drives a higher rate of police shootings, among those incidents collected by the Washington Post. 
+
+
+
+
