@@ -1,0 +1,750 @@
+---
+title: "state_profile"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## PPP State Profile
+
+Your assignment is to explore a dataset of PPP loan applications for a particular state and to answer a series of questions that will help you summarize that state's loan applications. You will need to write R code to answer those questions. You also will bring in other data, including Census information, and you will be making graphics, including maps, to illustrate your findings.
+
+The deliverable will be this R Markdown notebook and a data folder that you will receive with a state's loan application data. Place any other data you are using to answer the questions in the same data folder.
+
+## Load libraries and establish settings
+
+**Task** Create a codeblock and load appropriate packages and settings for this assignment.
+
+```{r}
+options(scipen=999)
+library(tidyverse)
+library(tidycensus)
+library(stringr)
+library(janitor)
+library(lubridate)
+library(ggrepel)
+library(sf)
+library(tigris)
+```
+
+
+## Initial Exploration
+
+**Q1.**. Write R code that generates some basic descriptive statistics that allows you to describe the applications from your state. This code should produce results that describe the data in different ways: how many applications there are, along with ways to understand the typical and most frequent values for columns you find interesting or newsworthy. You should produce at least five (5) descriptive statistics and write up a summary of the data using them.
+
+**A1.** A total of 143,277 Mississippi businesses applied for a $5.5 billion in Paycheck Protection Program loans, with an average loan application of almost $38,500.
+
+One company, Staff Pro LLC of Gulfport, applied for a $10 million maximum amount loan.  
+
+By industry, beauty salons applied for the most loans (9,714), followed by freight truckers and landscapers. Most truckers who applied for loans have business types that suggest they're predominantly sole proprietors and independent owner/operators (as opposed to multi-driver trucking companies). 
+
+Together, businesses that applied for loans said they collectively could protect 695,946 jobs. Nearly 70% of the more than 143,000 loan applications were made by businesses saving a single job -- sole proprietors, self-employed, single-person LLCs, independent contractors, and others. Among larger businesses, loans sought to protect an average of 13.5 jobs. 
+
+A small fraction of loans, 5.7%, show some as yet undisbursed funds. Nine of the top 10 loans with undisbursed funds appear to be filed by health care businesses, possibly long-term care (nursing home) facilities. (I wonder if this represents some initial confusion about who could apply for this program.) The top two lenders among these loans with undisbursed funds were Harvest Small Busness Finance and Capital Plus Financial. 
+
+The most loan applications came from businesses in Jackson, the state capitol, and its county, Hinds County. 
+
+```{r}
+mississippi_ppp <- read_rds("ms_ppp.rds/ms_ppp.rds")
+```
+
+```{r}
+# total dollar amount of loan applications - 5,515,929,542
+# average loan application size - 38,498.36
+
+mississippi_ppp %>%
+  summarise(total_dollars = sum(amount))
+
+mississippi_ppp %>%
+  summarise(ave_loan = mean(amount))
+
+mississippi_ppp %>%
+  summarise(count = n())
+
+```
+
+```{r}
+# max loans
+
+mississippi_ppp %>%
+  filter(amount == 10000000)
+```
+
+
+```{r}
+# top naics codes 
+# 1. 812112 (beauty salons ex barber shops)
+# 2. 484121 (general freight trucking, long-distance) - port related?
+# 3. 561730 (landscaping)
+
+mississippi_ppp %>%
+  group_by(naics_code) %>%
+  summarise(naics_count = n()) %>%
+  arrange(desc(naics_count))
+
+# how many 484121 file as sole propritors?
+# most -- 1900, with LLC second (semi- owner/operators) -- top 4 categories mostly individual truckers 
+
+mississippi_ppp %>%
+  filter(naics_code == 484121) %>%
+  group_by(business_type) %>%
+  summarise(trucker_type = n()) %>%
+  arrange(desc(trucker_type))
+
+```
+
+```{r}
+# total jobs retained - 695,946	
+# average jobs retained - 4.9 (small)
+
+mississippi_ppp %>%
+  summarise(total_jobs = sum(jobs_retained))
+
+mississippi_ppp %>%
+  summarise(ave_jobs = mean(jobs_retained))
+
+mississippi_ppp %>%
+  filter(jobs_retained == 1) %>%
+  group_by(business_type) %>%
+  summarise(singles = n()) %>% 
+  arrange(desc(singles))
+
+mississippi_ppp %>%
+  filter(jobs_retained > 1) %>%
+  summarise(ave_jobs_2plus = mean(jobs_retained))
+  
+```
+
+```{r}
+# loans with undisbursed funds - 8,114 loans with undisbursed funds
+# largest 1.24 million - interesting that the top 9 of 10 look like long-term care
+# top two lenders for number of loans with undisbursed funds were Harvest Small Business Finance and Capital Plus Financial
+
+mississippi_ppp %>%
+  filter(undisbursed_amount > 0) %>%
+  arrange (desc(undisbursed_amount))
+
+mississippi_ppp %>%
+  filter(undisbursed_amount > 0) %>%
+  arrange (desc(undisbursed_amount)) %>%
+  group_by(servicing_lender_name) %>%
+  summarise(und_lenders = n()) %>%
+  arrange(desc(und_lenders))
+  
+```
+
+```{r}
+# distribution by county - Hinds is the top county (Jackson, state capitol)
+# top cities 
+
+mississippi_ppp %>%
+  group_by(project_county_name) %>%
+  summarise(loc = n()) %>%
+  arrange(desc(loc))
+
+mississippi_ppp %>%
+  group_by(project_city) %>%
+  summarise(city = n()) %>%
+  arrange(desc(city))
+
+# cities column needs to be cleaned (below)
+  
+```
+
+```{r}
+# top city is Jackson by a factor of 2.5, followed by Hattiesburg, Gulfport, Tupelo, Columbus
+
+mississippi_ppp_cleaned <- mississippi_ppp %>%
+  mutate(project_city = str_to_title(project_city))
+
+mississippi_ppp_cleaned
+
+mississippi_ppp_cleaned %>%
+  group_by(project_city) %>%
+  summarise(city = n()) %>%
+  arrange(desc(city))
+  
+```
+
+
+## Geographic Analysis
+
+**Q2.** Write R code that examines geographic patterns for PPP loans in your state, using Census population information to calculate a per-capita figure for the state and counties and zip codes. Then, make a county map using ggplot showing the per-capita data and a zip code map showing the difference from the statewide per-capita figure. Describe the most interesting or newsworthy findings based on your exploration.
+
+**A2.** Geographically, the areas around the cities of Jackson, Macon and Greenwood show the highest per capita loan amounts. This conforms with the analysis at the top showing Jackson with the most loans. Not a lot of news here, honestly. 
+
+
+```{r}
+pop_vars <- load_variables(2019, "acs5", cache = TRUE)
+```
+
+
+```{r}
+# state-level loans per population
+# 4,801 loans per 100k people statewide
+
+MS_pop <- get_acs(geography = "state",
+                  state = "MS",
+                  year = 2019,
+                  variables = "B01001_001")
+MS_pop
+MS_state_pop = 2984418
+
+MS_total <- mississippi_ppp_cleaned %>%
+  summarise(total = n())
+MS_total
+MS_total_loans = 143277
+
+count_loans_per_capita = MS_total_loans/MS_state_pop
+
+count_loans_per_100k = round(count_loans_per_capita*100000)
+count_loans_per_100k
+
+```
+
+```{r}
+# state-level loan amounts per population
+# $1848 loans per person
+
+MS_total_amount <- mississippi_ppp_cleaned %>%
+  summarise(total = sum(amount))
+MS_total_amount
+MS_total_amount = 5515929542
+
+amount_loans_per_capita = round(MS_total_amount/MS_state_pop)
+amount_loans_per_capita
+
+```
+
+
+```{r}
+# county average loan per capita
+
+MS_county_pop <- get_acs(geography = "county",
+                      state = "MS",
+                      year = 2019,
+                      variables = "B01001_001")
+
+MS_county_pop <- MS_county_pop %>%
+  select(-moe, -variable)
+
+MS_county_pop <- MS_county_pop %>%
+  mutate(NAME = str_remove(NAME, " County, Mississippi"))
+
+MS_county_ppp <- mississippi_ppp_cleaned %>%
+  group_by(project_county_name) %>%
+  summarise(total = sum(amount)) %>%
+  mutate(project_county_name = str_to_title(project_county_name))
+
+MS_county_ppp$project_county_name[MS_county_ppp$project_county_name == "Desoto"] <- "DeSoto"
+
+MS_county_ppp <- MS_county_ppp %>%
+  left_join(MS_county_pop, by = c("project_county_name" = "NAME"))
+
+MS_county_ppp <- MS_county_ppp %>%
+  mutate(per_capita_loan = round(total/estimate)) %>%
+  drop_na()
+
+
+# dropped Shelby County; no GEOID and no loans 
+
+```
+
+```{r}
+# get MS counties geo
+
+MS_counties <- counties("MS")
+options(tigris_use_cache = TRUE)
+glimpse(MS_counties)
+```
+
+```{r}
+# join loan data to geo data
+
+MS_county_ppp_geo <- MS_county_ppp %>%
+  left_join(MS_counties, by = "GEOID")
+```
+
+
+```{r}
+ggplot() + 
+  geom_sf(data=MS_counties) + 
+  geom_sf(data=MS_county_ppp_geo, aes(fill=per_capita_loan, geometry=geometry)) +
+  scale_fill_viridis_b(option="magma", direction = -1) + 
+  theme(rect = element_blank()) + 
+  theme_void() +
+  ggtitle("Per Capita PPP Loans by County")
+```
+
+
+```{r}
+# ZIP average loan per capita
+
+MS_zip_pop <- get_acs(geography = "zcta",
+                      state = "MS",
+                      year = 2019,
+                      variables = "B01001_001")
+
+MS_zip_pop <- MS_zip_pop %>%
+  select(-moe, -variable)
+
+MS_zip_ppp <- mississippi_ppp_cleaned %>%
+  mutate(zip = str_sub(zip, start=1L, end=5L)) %>%
+  group_by(zip) %>%
+  summarize(total = sum(amount)) 
+
+MS_zip_ppp <- MS_zip_ppp %>%
+  left_join(MS_zip_pop, by = c("zip" = "GEOID"))
+
+MS_zip_ppp <- MS_zip_ppp %>%
+  mutate(per_capita_loan = round(total/estimate)) %>%
+  drop_na() %>%
+  filter(estimate > 0) # getting rid of 'inf' estimates
+
+```
+
+
+```{r}
+# get MS zip codes
+zcta_ms <- zctas(year=2010, state="Mississippi")
+options(tigris_use_cache = TRUE)
+glimpse(zcta_ms)
+```
+
+```{r}
+# join average loans with geo
+MS_zip_ppp_geo <- zcta_ms %>%
+  left_join(MS_zip_ppp, by = c("ZCTA5CE10" = "zip"))
+```
+
+
+```{r}
+ggplot() +
+  geom_sf(data=MS_zip_ppp_geo, aes(fill=per_capita_loan)) +
+  scale_fill_viridis_c(option = "plasma", trans = "log") +
+  theme_void() +
+  labs(title = "Per Capita Loan by ZIP Code", hjust=1) +
+  theme(plot.title = element_text(hjust = 0.25))
+```
+
+I set map scale to "log" to get any kind of differentiation in color. The scale is skewed by a commercial district (38704) in Greenville that contains only two residents and therefore a per capita loan amount over $200,000. There's also one commercial ZIP in Jackson that's a high outlier.
+
+
+## Lender Analysis
+
+**Q3.** Write R code to examine which lenders had the most approved applications in your state (and include summary statistics such as total amount and average loan amount). Generate dataframes that show the number and total amount of all loans and undisbursed loans per lender. For those lenders who had any undisbursed loans, make a graphic showing the relationship between the total amount of loans and the total undisbursed amount. Describe the most noticeable outlier lenders on that graphic below.
+
+**A3.** https://www.datawrapper.de/_/6Iq4n/
+
+Among the top 10 lenders that the highest proportion of undisbursed loans to approved loans, two lenders stand out for the highest dollar value of undisbursed loans -- Lendistry and Capital Plus Financial. Both describe themselves as community based lenders that specialize in underserved communities. Lendistry is significantly bigger than Capital Plus Financial, advertising a partnership with Amazon to support small businesses. Capital Plus Financial, on the other hand, primarily serves Hispanic borrowers in the Texas real estate market. Third in line, Leader Bank, is a Massachusetts lender specializing in small businesses. Unlike PPP online lenders that surfaced in other states, all three have established histories before the PPP program.
+
+
+```{r}
+# approved loans
+
+mississippi_ppp_cleaned_lenders <- mississippi_ppp_cleaned %>%
+  group_by(lender) %>%
+  summarise(count = n(), amount = sum(current_approval_amount)) %>%
+  mutate(ave_approved_byLender = round(amount/count, digits = 2)) %>%
+  arrange(desc(count))
+
+mississippi_ppp_cleaned_lenders
+
+```
+
+```{r}
+# top 10 lenders by count of loans
+
+top_lenders <- mississippi_ppp_cleaned_lenders %>%
+  arrange(desc(count)) %>%
+  slice_head(n=10)
+top_lenders
+
+```
+
+```{r}
+# top 10 lenders by total amount
+
+top_money <- mississippi_ppp_cleaned_lenders %>%
+  arrange(desc(amount)) %>%
+  slice_head(n=10)
+top_money
+
+```
+
+```{r}
+# top 10 lenders by average amount
+
+top_ave_loan <- mississippi_ppp_cleaned_lenders %>%
+  arrange(desc(ave_approved_byLender)) %>%
+  slice_head(n=10)
+top_ave_loan
+
+# This is interesting. A fair number of one-loan lenders with very high loan amounts.
+
+```
+
+```{r}
+# focus on single-loan lenders
+
+MS_single_lenders <- mississippi_ppp_cleaned %>%
+  group_by(lender) %>%
+  filter(n()==1) %>% 
+  arrange(desc(amount))
+
+MS_single_lenders
+
+# How many of these are MS outposts of larger outfits? Top 5 checked out:
+# Master-Bilt: based in WI; MS manufacturing plant?
+# Charles N. White: Huge MS factory construction outfit with major clients
+# Cornithian: furniture & cabinet manuf; looks like MS arm of larger outfit
+# Gannett: most corp employees in McLean, so what's this? (more Gannett elsewhere in PPP db?)
+# P H Food Inc.: retail chain or grocery freight? unclear
+
+```
+
+```{r}
+# all lenders, count, average approved loan, average undisbursed loan
+
+MS_loans_loanDisb <- mississippi_ppp_cleaned %>%
+  group_by(lender) %>%
+  summarise(count = n(), ave_approved = round(mean(current_approval_amount), digits = 2), ave_undisbursed = round(mean(undisbursed_amount), digits = 2)) %>%
+  arrange(desc(ave_undisbursed))
+
+MS_loans_loanDisb
+
+```
+
+```{r}
+# all lenders, count, average approved loan, average undisbursed loan
+# drop lenders w/o undisbursed loans
+
+MS_loans_loanDisb <- mississippi_ppp_cleaned %>%
+  group_by(lender) %>%
+  summarise(count = n(), total_approved = sum(current_approval_amount), ave_approved = round(mean(current_approval_amount), digits = 2), total_undisbursed = sum(undisbursed_amount), ave_undisbursed = round(mean(undisbursed_amount), digits = 2)) %>%
+  filter(ave_undisbursed > 0) %>%
+  arrange(desc(total_undisbursed)) 
+
+MS_loans_loanDisb
+
+top_loanUndisb <- MS_loans_loanDisb %>%
+  slice_head(n=8)
+
+write_csv(top_loanUndisb, "ms_ppp.rds/MS_loan_top_undisbursed.csv")
+
+# Visualization 1 -
+# https://www.datawrapper.de/_/y2Rvh/
+# This isn't exactly hitting the mark, going to try ratio of undisbursed to disbursed. 
+
+```
+
+```{r}
+# calculate ratio of undisbursed to approved loans, sort desc, slice to top 10
+# this data used for visualization linked in answer
+
+MS_loans_loanDisb_top <- MS_loans_loanDisb %>%
+  mutate(undisb_ratio = round(total_undisbursed/total_approved*100)) %>%
+  arrange(desc(undisb_ratio)) %>%
+  slice_head(n=10)
+
+MS_loans_loanDisb_top
+
+write_csv(MS_loans_loanDisb_top, "ms_ppp.rds/ratio_undisbursed.csv")
+
+```
+
+
+```{r}
+# undisbursed only
+# diff - only adds counts of undisbursed loans by lender
+
+MS_undisbursed <- mississippi_ppp_cleaned %>%
+  filter(undisbursed_amount > 0) %>%
+  group_by(lender) %>%
+  summarise(count = n(), total = sum(undisbursed_amount), ave_undisbursed = round(mean(undisbursed_amount), digits = 2)) %>%
+  arrange(desc(count))
+
+MS_undisbursed
+
+```
+
+```{r}
+# following up large undisbursed by industry in section 1 above
+
+MS_undsb_lgst <- mississippi_ppp_cleaned %>%
+  filter(undisbursed_amount > 0) %>%
+  arrange(desc(undisbursed_amount))
+
+MS_undsb_lgst
+
+# Theme! Bedford Care Center - local SNF chain (+Alzh specialty center)
+
+```
+
+```{r}
+# None of the Bedford loans disbursed.
+
+Bedford <- mississippi_ppp_cleaned %>%
+  filter(str_detect(name, "BEDFORD") & str_detect(name, "CARE| HEALTH"))
+Bedford
+
+Bedford_total = sum(Bedford$amount) - sum(Bedford$undisbursed_amount)
+Bedford_total
+```
+
+
+## Industry Analysis
+
+**Q4.** Write R code that examines industry patterns for PPP loans in your state, using the NAICS codes from the PPP data as a starting point. Generate statewide and county industry totals, then join that with 2018-19 data from the [Census County Business Patterns survey](https://www2.census.gov/programs-surveys/cbp/datasets/2019/cbp19co.zip) using 6-digit NAICS codes. The documentation explaining that data can be found here: https://www2.census.gov/programs-surveys/cbp/technical-documentation/records-layouts/2018_record_layouts/county-layout-2018.txt. To do this, you will need to add FIPS codes to your PPP dataset.
+
+Does the distribution of PPP applications by the top 10 industries (by number of applications) roughly match the number of businesses reported in the Census data? Does it roughly match if you remove self-employed individuals and sole proprietorships from the PPP totals? Write up a summary of what you've found and whether there are potentially newsworthy patterns in the data.
+
+Create a county-level map showing the differences between the PPP applications and the Census business data for one of the top 10 industry codes. You can do this either using ggplot or Datawrapper (if the latter, publish that map and include the URL below).
+
+**A4.** https://www.datawrapper.de/_/3n3Wh/
+
+
+
+```{r}
+# naics descriptions by code for easier reference
+naics_index <- read_csv("ms_ppp.rds/2017_NAICS_Descriptions.csv")
+```
+
+
+```{r}
+# state view of ppp loans by industry
+# manually adding state fips for join
+
+ms_ppp_naics <- mississippi_ppp_cleaned %>%
+  group_by(naics_code) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)) %>% 
+  mutate(naics_code = as.character(naics_code))
+ 
+ms_ppp_naics <- ms_ppp_naics %>%
+  mutate(state_fips = "28")
+
+```
+
+```{r}
+# file for distribution of industries geographically
+naics_dist <- read.delim("ms_ppp.rds/cbp19co.txt", sep = ",", colClasses = c("fipstate" = "character", "fipscty" = "character"))
+```
+
+
+```{r}
+# narrowing naics distribution file to Mississippi
+# dropping all rows with naics category information
+# EST for total number of establishments
+
+naics_ms <- naics_dist %>%
+  filter(fipstate == "28")
+
+naics_ms_set <- subset(naics_ms, grepl('^\\d+$', naics_ms$naics))
+
+```
+
+
+```{r}
+# rollup naics_set to state level for first join
+# error in naics = 113310 (thinks column is character)
+# [count of counties added fixed the character type problem on summarise]
+
+naics_ms_state <- naics_ms_set %>%
+  group_by(naics) %>%
+  summarise(counties = n(), exp_total_state = sum(est))
+
+naics_ms_state
+
+```
+
+
+```{r}
+# join MS ppp data by naics with naics roll-up at state level
+# note that sort on "count" matches original at top (gut check)
+
+ms_ppp_naics_state <- ms_ppp_naics %>%
+  left_join(naics_ms_state, by = c("naics_code" = "naics"))
+
+ms_ppp_naics_state_labeled <- ms_ppp_naics_state %>%
+  left_join(naics_index, by = c("naics_code" = "Code"))
+
+naics_state_top10 <- ms_ppp_naics_state_labeled %>%
+  select(-state_fips, -counties, -Description) %>%
+  slice_head(n=10) 
+
+naics_state_top10
+
+# The best match here is for Full-Service Restaurants. It's already evident we're probably seeing a mismatch between less formal businesses (and maybe overstated numbers) on the PPP loan side and undercounting of less formal businesses in the NAICS set, because I can't believe there are only 6 barber shops in Mississippi. Also, this raises questions about the consistency of NAICS coding across these two data sets -- are the NAICS codes self-reported or assigned?  
+
+```
+
+```{r}
+# second verse, same as the first
+# this time, remove sole proprietors and self-employed
+
+ms_ppp_naics_noSE <- mississippi_ppp_cleaned %>%
+  filter(business_type != "Sole Proprietorship" & business_type != "Self-Employed Individuals") %>%
+  group_by(naics_code) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)) %>% 
+  mutate(naics_code = as.character(naics_code))
+ 
+ms_ppp_naics_noSE <- ms_ppp_naics_noSE %>%
+  mutate(state_fips = "28")
+
+ms_ppp_naics_state_noSE <- ms_ppp_naics_noSE %>%
+  left_join(naics_ms_state, by = c("naics_code" = "naics"))
+
+ms_ppp_naics_state_noSE_labeled <- ms_ppp_naics_state_noSE %>%
+  left_join(naics_index, by = c("naics_code" = "Code"))
+
+naics_state_top10_noSE <- ms_ppp_naics_state_noSE_labeled %>%
+  select(-state_fips, -counties, -Description) %>%
+  slice_head(n=10) 
+
+naics_state_top10_noSE
+
+# Better. For example, Religious Organizations show something closer to what might be expected -- a subset (1775) of total churches (2852) applied for loans. As also as may be expected, lawyers hopped on the PPP program and applied for PPP loans in numbers about equal to their expected count. Major gaps still exist, and here beauty salons and trucking stands out again. In the PPP data, self-selection of business type might cause discrepancies with NAICS data, as well as general undercounting in the NAICS data.
+
+```
+
+```{r}
+
+# county fips
+MS_county_fips <- read.delim("ms_ppp.rds/ms_county_fips.txt", sep = ",", colClasses = c("county_fips" = "character"))
+
+MS_county_fips <- MS_county_fips %>%
+  select(-state, -state_fips, -dunno) %>%
+  mutate(county = str_remove(county, " County")) %>%
+  mutate(county = str_to_upper(county))
+
+```
+
+
+```{r}
+# COUNTY roll-up
+# join to county FIPS
+# https://www2.census.gov/geo/docs/reference/codes/files/st28_ms_cou.txt
+
+mississippi_ppp_cleaned$project_county_name <- as.factor(mississippi_ppp_cleaned$project_county_name)
+
+ms_ppp_naics_county <- mississippi_ppp_cleaned %>%
+  mutate(naics_code = as.character(naics_code)) %>%
+  group_by(project_county_name, naics_code) %>%
+  summarise(count = n())
+
+ms_ppp_naics_county
+
+```
+
+
+```{r}
+# join county naics data w/ fips codes
+
+ms_ppp_naics_county_fips <- ms_ppp_naics_county %>%
+  left_join(MS_county_fips, by = c("project_county_name" = "county"))
+
+ms_ppp_naics_county_fips
+
+```
+
+```{r}
+# join ppp to expected counts file
+# diff actual to expected
+
+ms_ppp_naics_county_compared <- ms_ppp_naics_county_fips %>%
+  left_join(naics_ms_set, by = c("county_fips" = "fipscty", "naics_code" = "naics"))
+
+ms_ppp_naics_county_compared
+
+ms_ppp_naics_act_exp <- ms_ppp_naics_county_compared %>%
+  select(project_county_name, naics_code, count, county_fips, est)
+
+ms_ppp_naics_act_exp <- ms_ppp_naics_act_exp %>%
+  mutate(loansVsEst = count-est)
+
+ms_ppp_naics_act_exp
+
+# If there's a pattern in this, it would be that there are consistently more loan applications than the estimated number of businesses. There are lots of cases where a single business applied for the loan but no business of that type shows up in the county. The higher the count of loans gets > 1, the more likely there are some businesses of that type expected in the county. 
+
+```
+
+
+```{r}
+# drop self employed and self proprietors from county data and run again
+
+ms_ppp_naics_county_noSE <- mississippi_ppp_cleaned %>%
+  filter(business_type != "Sole Proprietorship" & business_type != "Self-Employed Individuals") %>%
+  mutate(naics_code = as.character(naics_code)) %>%
+  group_by(project_county_name, naics_code) %>%
+  summarise(count = n())
+
+ms_ppp_naics_county_noSE
+
+ms_ppp_naics_county_fips_noSE <- ms_ppp_naics_county_noSE %>%
+  left_join(MS_county_fips, by = c("project_county_name" = "county"))
+
+ms_ppp_naics_county_fips_noSE
+
+ms_ppp_naics_county_noSE_compared <- ms_ppp_naics_county_fips_noSE %>%
+  left_join(naics_ms_set, by = c("county_fips" = "fipscty", "naics_code" = "naics"))
+
+ms_ppp_naics_county_noSE_compared
+
+ms_ppp_naics_act_exp_noSE <- ms_ppp_naics_county_noSE_compared %>%
+  select(project_county_name, naics_code, count, county_fips, est)
+
+ms_ppp_naics_act_exp_noSE <- ms_ppp_naics_act_exp %>%
+  mutate(loansVsEst = count-est)
+
+ms_ppp_naics_act_exp_noSE
+
+# The pattern described above is not significantly changed by dropping the self employed and sole proprietors from the data set. I think more information was gleaned by running this type of analysis by industry at the state level. 
+
+```
+
+```{r}
+# top 10 view at the county level
+# using state level top 10 naics after self employed removed
+
+top10_county_naics <- ms_ppp_naics_act_exp_noSE %>%
+  filter(naics_code == "722511" | naics_code == "813110" | naics_code == "484121" | naics_code == "812112" | naics_code == "541110" | naics_code == "621111" | naics_code == "484110" | naics_code == "722513" | naics_code == "621210" | naics_code == "524210")
+
+top10_county_naics <- top10_county_naics %>%
+  left_join(naics_index, by = c("naics_code" = "Code"))
+
+top10_county_naics
+
+```
+
+```{r}
+# Create a county-level map showing the differences between the PPP applications and the Census business data for one of the top 10 industry codes.
+# intentionally go back to data set that retains the self-employed > long-haul trucking
+
+ms_longhaul_trucking <- ms_ppp_naics_act_exp %>%
+  filter(naics_code == "484121")
+
+ms_longhaul_trucking$loansVsEst[is.na(ms_longhaul_trucking$loansVsEst)] <- 0
+  
+write_csv(ms_longhaul_trucking, "ms_ppp.rds/ms_longhaul_trucking.csv")
+
+```
+
+
+## Summary
+
+**Q5.** What is the most promising story idea that you have found during this exploration? How would you approach reporting it out and what other information/data would you need to do that? What would be the minimum story you could get from this, and what would be the maximum story?
+
+**A5.** The most interesting story in this data is the number of truckers -- short and long haul, many of them organized as some kind of independent operation -- who appeared in the data seeking paycheck protection support. My working hypothesis is that in normal times these folks can make a living in a state with major port and river shipping infrastructures because there's typically enough work to go around. Then commerce collapsed under COVID-19.  
+
+At a minimum, there's a story on independent truckers trying to figure out how to survive the COVID-19 economic shutdown. A little more broadly, the disruption may have surfaced a layer of the economy previously hidden. The census data, and the absence of truckers in the census data, could be a clue -- have we been relying on this network without even knowing or fully appreciating its existence? The Amazon trucks are obvious, but who moves the wholesale goods that run the economy? How does this independent operating network integrate with the port system? The analysis here would need to be refocused and combine all trucking categories to get the full picture. 
+
+Another minimum story might involve the challenges of being a one-person trucking outfit without any kind of safety net. The maximum story could span the whole COVID-19 narrative. Did these truckers ride out the crash, or did they move on to other jobs? How are they faring now with supply chain chaos? Are they maybe thriving -- or is the market hot and cold -- as we try to get commerce moving again?
+
+The trucking data in the PPP loan data can be amassed differently than I've applied it here. I'd start by looking at the loan applications in some kind of distribution of business type and then by trucking type (long, short, etc) to get a better handle on the volume. Then, I'd need to understanding what it takes to be an independent freight operator. Do you own your own truck? Do you subcontract to a bigger company? (A ton of questions here. I'd need a trucking association to give me a short course.) It begs for an anecdotal story that could tie the data to someone's lived experience of riding the lows and (theoretically) highs of COVID's economic disruption. 
+
+For a bigger picture story, I'd back out of Mississippi and start pulling trucker data from the PPP loan set for all the Gulf states. Or, if not the whole Gulf, it could be focused to the Gulf/Mississippi River shipping zone.
+
