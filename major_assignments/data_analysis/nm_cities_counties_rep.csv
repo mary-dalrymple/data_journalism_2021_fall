@@ -1,0 +1,47 @@
+city,counties
+Alamogordo,Otero
+Albuquerque,Bernalillo
+Angel Fire,Colfax
+Artesia,Eddy
+Aztec,San Juan
+Bernalillo,Sandoval
+Carlsbad,Eddy
+Carrizozo,Lincoln 
+city,fips_codes
+Clovis,Curry
+Crownpoint,McKinley
+Deming,Luna
+Edgewood,Santa Fe
+Eldorado,Santa Fe
+Espanola,Rio Arriba
+Farmington,San Juan 
+Fort Sumner,De Baca
+Gallup,McKinley
+Hanover,Grant
+Hobbs,Lea 
+Jal,Lea
+Laguna,Cibola
+Laguna Pueblo,Cibola
+Las Cruces,Dona Ana
+Las Vegas,San Miguel
+Los Lunas,Valencia
+Lovington,Lea 
+Meadow Lake,Valencia
+Moriarty,Torrance
+Naschitti,San Juan
+Penasco,Taos
+Pueblo of Laguna,Cibola
+Roswell,Chaves
+Rowe,San Miguel
+Ruidoso,Lincoln 
+San Rafael,Cibola
+Santa Fe,Santa Fe
+Shiprock,San Juan
+Socorro,Socorro
+Sunland Park,Dona Ana
+Taos,Taos 
+Tesuque,Santa Fe
+Truth or Consequences,Sierra 
+Tucumcari,Quay
+Tularosa,Otero
+Ventana Ranch,Bernalillo

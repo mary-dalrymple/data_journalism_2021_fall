@@ -1,0 +1,884 @@
+---
+title: "Washington Post Fatal Police Shootings"
+author: "Mary Dalrymple, Victoria Ifatusin, Blake Townsend"
+date: "12/6/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen=999)
+```
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(tidycensus)
+library(ggplot2)
+library(ggthemes)
+library(cleaner)
+library(stringr)
+library(sf)
+library(tigris)
+library(RColorBrewer)
+library(corrr)
+```
+
+# Summary
+
+New Mexico wins the bleak designation of being the state with the most fatal police shootings per population in The Washington Post's Fatal Force database (https://github.com/washingtonpost/data-police-shootings). Below, we explore why and consider theories related to race, alcohol, unaccounted Native American deaths, and gun laws. We theorize all four factors play a role in New Mexico's highest rate of killings.
+
+Specifically, the factors that warrant additional reporting that may be driving up the rate of shootings in New Mexico include:
+
+* permitless open carry gun laws
+What do these laws allow and how does this play out in real rates of gun ownership and/or overall gun crimes?
+
+* highest national rates of heavy, chronic alcohol use
+This factor relies heavily on survey data described below, and needs to be fleshed out with additional evidence.  
+
+* Hispanic victims shot at rates higher than their proportion in the population
+This finding came from the WaPo data, and our findings are described below.
+
+* Native American shooting victims hiding in plain sight
+  + their numbers underrepresented in WaPo shooting database compared with NM population
+  + national and Western rates from a separate data source point to high expected rates (more below)
+  + large number of non-racially-identified killings on or near tribal lands (more below)
+
+We also summarize the data that points to a separate story on the relation between gun laws and rates of fatal police shootings. 
+
+# Read & Explore Data
+
+```{r}
+wapo_police_shootings <- read_csv("fatal-police-shootings-data.csv")
+```
+
+The Washington Post data set records every police shooting in the United States staring in 2015, including various characteristics of the victim and circumstances related to the shootings, shown below. The most recent shootings appear be more likely to be missing at least some information. Older incidents tend to be more complete.
+
+```{r}
+colnames(wapo_police_shootings)
+```
+
+Basic descriptions of all shootings:
+
+```{r}
+wapo_police_shootings %>%
+ group_by(flee) %>%
+ summarise(total = n()) #Majority of the victims were not fleeing.
+
+
+sum(is.na(wapo_police_shootings$name)) #269 NA names.
+
+
+wapo_police_shootings %>%
+ group_by(age) %>%
+ summarise(total = n()) %>%
+ arrange(desc(total))  #NA under age comes up the most, 31 was after.
+ #arrange(desc(age))
+
+
+wapo_police_shootings %>%
+ group_by(state) %>%
+ summarise(total = n()) %>%
+ arrange(desc(total)) #California has the most shootings.
+
+
+wapo_police_shootings %>%
+ group_by(city) %>%
+ summarise(total = n()) %>%
+ arrange(desc(total)) #Los Angeles has the most shootings.
+
+
+wapo_police_shootings %>%
+ group_by(armed) %>%
+ summarise(total = n()) %>%
+ arrange(desc(total)) #Majority of the victims were armed with a gun.
+
+
+wapo_police_shootings %>%
+ group_by(body_camera) %>%
+ summarise(total = n()) #7.2% of officers had their body camera on at the time of the shooting.
+
+
+wapo_police_shootings %>%
+ group_by(threat_level) %>%
+ summarise(total = n()) #Majority of the victims had a threat level of "attack."
+
+
+wapo_police_shootings %>%
+ group_by(gender) %>%
+ summarise(total = n()) #95% of victims were males.
+
+
+wapo_police_shootings %>%
+ group_by(race) %>%
+ summarise(total = n()) %>%
+ arrange(desc(total)) #Majority of victims were white, followed by Black, followed by Hispanic. Also, there's no way in this db to indicate more than one race.
+```
+
+
+# By Population
+
+To normalize the rate of police shootings by state, we calculate the number of police shootings per 100,000 residents.
+
+
+```{r}
+
+# group shootings by state
+wapo_police_shootings_bystate <- wapo_police_shootings %>%
+ group_by(state) %>%
+ summarise(shootings = n())
+
+
+# load census variables
+vars <- load_variables(year = 2019,
+                      dataset = "acs1",
+                      cache = TRUE)
+
+
+# get state populations; join with state 2-letter abbreviations
+state_pops <- get_acs(geography = "state",
+                     variables = "B01001_001")
+
+
+state_pops <- state_pops %>%
+ select(-variable, -moe)
+state_pops
+
+
+state_abbreviations <- read_csv("name-abbr.csv")
+state_abbreviations
+
+
+state_pop_abbrev <- state_pops %>%
+ inner_join(state_abbreviations, by = c("NAME" = "state"))
+
+
+wapo_police_shootings_per100k <- state_pop_abbrev %>%
+ left_join(wapo_police_shootings_bystate, by = c("abbreviation" = "state")) %>%
+ mutate(shootings_percapita = shootings/estimate) %>%
+ mutate(shootings_per100k = shootings_percapita * 100000) %>%
+ arrange(desc(shootings_per100k))
+
+
+wapo_police_shootings_per100k
+
+
+```
+
+New Mexico and Alaska stand apart from all other states with 6.4 police shootings per 100,000 residents. The next closest is Oklahoma at 4.3 per 100,000 residents. We picked New Mexico to investigate more deeply, due to its very slightly higher rate of fatal shootings that makes it top in the nation. After completing our analysis for New Mexico, however, the same factors we investigate for New Mexico may apply equally to Alaska and explain the high rates in both states. We don't pursue analysis related to Alaska here, but it's a potential avenue for a separate story.
+
+
+# New Mexico
+
+## General Drill-Down
+
+### Age
+
+New Mexican victims tend to be younger, on average, than the victims nationwide (for whom we have ages). The average New Mexican victim was almost 41 years old, whereas the average victim nationally was nearly 50.
+
+```{r}
+new_mex_shootings <- wapo_police_shootings %>%
+ filter(state == "NM")
+
+nm_age_shootings <- new_mex_shootings %>%
+ group_by(age) %>%
+ summarise(total = n()) %>%
+ arrange(desc(total))
+
+nm_age_shootings_mean <- nm_age_shootings %>%
+  drop_na() %>%
+  summarise(mean(age))
+
+national_shootings_age <- wapo_police_shootings %>%
+ group_by(age) %>%
+ summarise(count = n()) %>%
+ arrange(desc(count))
+
+national_shootings_age_mean <- national_shootings_age %>%
+  drop_na() %>%
+  summarise(mean(age))
+
+```
+
+### Fleeing
+
+More than half the New Mexican victims were not fleeing when shot by police. 
+
+```{r}
+# National percentage:
+wapo_police_shootings %>%
+ group_by(flee) %>%
+ summarise(total = n())
+
+
+# New Mexico numbers
+nm_shootings <- wapo_police_shootings %>%
+ filter(state == "NM")
+
+
+nm_flee_summarized <- nm_shootings %>%
+ group_by(flee) %>%
+ summarise(total = n()) %>%
+ mutate(pct_flee = total/134)
+nm_flee_summarized
+
+
+flee_pct <- c("perct_car", "perct_foot", "perct_not_flee")
+new_mexico <- c((29/5951)*100, (18/5951)*100, (72/5951)*100)
+national <- c((1088/5951)*100, (861/5951)*100, (4002/5951)*100)
+
+
+flee_summarized <- data.frame(flee_pct, new_mexico, national)
+
+
+flee_summarized %>%
+ ggplot() +
+ geom_point(aes(x=new_mexico,y=national)) +
+ geom_smooth(aes(x=new_mexico,y=national), method="lm")
+
+
+```
+
+### Body Camera
+
+In almost every shooting -- 115 of 134 -- the officer did not have a body camera on.
+
+```{r}
+# What kinds of body camera entries are there, and which one has the most?
+nm_body_cam <- nm_shootings %>%
+ group_by(body_camera) %>%
+ summarise(total = n())
+# True or False. True meaning the officer did have his body camera on, false meaning the officer did not have his body camera on. False has the most - 115.
+
+pct_body_cam <- c((115/134)*100)
+pct_non_body_cam <- c((19/134)*100)
+shootings_cam <- c(134)
+
+nm_body_cam_pcts <- data.frame(pct_body_cam, pct_non_body_cam, shootings_cam)
+
+```
+
+
+## Race
+
+We did an intensive investigation into the racial mix of shootings in New Mexico, starting with a mapping of the shootings in the state coded by race: https://datawrapper.dwcdn.net/EjPh9/2/
+
+Bernalillo County (Albuquerque) had the most fatal police shootings, specifically of Hispanics. We find the only two shootings recorded with Native American victims in McKinley County, the state's only Native American majority county. A cluster of Hispanic shootings occurred in the three counties to the north and east that have majority Hispanic populations. 
+
+This interactive allows for exploration of the the racial mix in New Mexico by county: https://datawrapper.dwcdn.net/2owJC/1/
+
+The rest of the New Mexico map superficially appears majority white, but the percentage of people identifying as Hispanic, perhaps in combination with white, exceeds 50% in many counties. 
+
+(Code blocks below support Datawrapper maps.)
+
+```{r}
+wapo_police_shootings %>% 
+  group_by(race) %>% 
+  summarise(total = n())
+
+nm_shootings <- wapo_police_shootings %>% 
+  filter(state == "NM")
+
+nm_cities_counties <- read_csv("nm_cities_counties_rep.csv")
+
+nm_shooting_locations <- nm_shootings %>% 
+  inner_join(nm_cities_counties, by=c("city")) %>% 
+  select(race, city, counties, longitude, latitude)
+
+nm_shooting_locations <- nm_shooting_locations %>% 
+  slice(-c(33, 46, 84, 118, 119)) 
+
+nm_shooting_locations %>% write_csv("nm_shooting_locations.csv")
+
+nm_shooting_locations %>% 
+  group_by(race) %>% 
+  summarise(total = n())
+```
+
+
+```{r}
+this.year = 2019
+
+vars <- load_variables(year = 2019,
+                       dataset = "acs5",
+                       cache = TRUE)
+
+us_pop <- get_acs(geography = "state",
+                  variables = c(estimate = "B01001_001"),
+                  year = 2019)
+#New Mexico has a population of 2,092,454. To confirm this:
+
+nm_pop <- get_acs(geography = "county",
+                  variables = c(estimate = "B01001_001"),
+                  state = "NM",
+                  year = 2019)
+
+sum(nm_pop$estimate)
+# 2,092,454 (confirmed)
+
+# getting the white numbers
+nm_pop_white <- get_acs(geography = "county",
+                      variables = c(estimate = "B02001_002"),
+                      state = "NM",
+                      year = 2019)
+
+#fixing the white numbers
+nm_pop_white <- nm_pop_white %>% 
+  rename("white_pop" = "estimate") 
+nm_pop_white <- nm_pop_white %>% 
+  select(-moe)
+nm_pop_white <- nm_pop_white %>% 
+  select(-variable)
+
+#fixing the overall population
+nm_pop <- nm_pop %>% 
+  select(-variable, -moe)
+nm_pop <- nm_pop %>% 
+  rename("population" = "estimate")
+
+#combining the columns
+nm_pop <- nm_pop %>% 
+  inner_join(nm_pop_white, by=c("GEOID", "NAME")) %>% 
+  mutate(white_pct = (white_pop/population)*100)
+
+#getting white numbers
+nm_pop_black <- get_acs(geography = "county",
+                        variables = c(black_pop = "B02001_003"),
+                        state = "NM",
+                        year = 2019)
+
+#fixing black numbers
+nm_pop_black <- nm_pop_black %>% 
+  rename("black_pop" = "estimate") %>% 
+  select(-moe, -variable)
+
+#comibining
+nm_pop <- nm_pop %>% 
+  inner_join(nm_pop_black, by=c("GEOID", "NAME")) %>% 
+  mutate(black_pct = (black_pop/population)*100)
+
+#getting Native numbers
+nm_pop_native <- get_acs(geography = "county",
+                         variables = c(estimate = "B02001_004"),
+                         state = "NM",
+                         year = 2019)
+#fixing Native numbers
+nm_pop_native <- nm_pop_native %>% 
+  rename("native_pop" = "estimate") %>% 
+  select(-moe, -variable)
+
+#combining
+nm_pop <- nm_pop %>% 
+  inner_join(nm_pop_native, by=c("GEOID", "NAME")) %>% 
+  mutate(native_pct = (native_pop/population)*100)
+
+#curious: Asian, because there are no shootings of Asians in the WaPo dataset.
+
+nm_pop_asian <- get_acs(geography = "county",
+                        variables = c(estimate = "B02001_005"),
+                        state = "NM",
+                        year = 2019)
+
+#fixing the Asian numbers
+nm_pop_asian <- nm_pop_asian %>% 
+  rename("asian_pop" = "estimate") %>% 
+  select(-moe, -variable)
+
+#combining
+nm_pop <- nm_pop %>% 
+  inner_join(nm_pop_asian, by=c("GEOID", "NAME")) %>% 
+  mutate(asian_pct = (asian_pop/population)*100)
+
+#hispanic numbers
+nm_pop_hispanic <- get_acs(geography = "county",
+                           variables = c(estimate = "B03001_003"),
+                           state = "NM",
+                           year = 2019)
+
+#fixing the Hispanic numbers
+nm_pop_hispanic <- nm_pop_hispanic %>% 
+  rename("hispanic_pop" = "estimate") %>% 
+  select(-moe, -variable)
+
+#combining
+nm_pop <- nm_pop %>% 
+  inner_join(nm_pop_hispanic, by=c("GEOID", "NAME")) %>% 
+  mutate(hispanic_pct = (hispanic_pop/population)*100)
+
+#To be editted in datawrapper...
+nm_pop$leading_race = nm_pop$NAME
+
+nm_pop %>% write_csv("nm_race_per_counties.csv")
+
+#In all...
+nm_race_pop <- get_acs(geography = "state",
+                       variables = c(estimate = "B02001_001"),
+                       state = "NM",
+                       year = 2019)
+
+nm_white_pop <- get_acs(geography = "state",
+                       variables = c(estimate = "B02001_002"),
+                       state = "NM",
+                       year = 2019)
+
+nm_black_pop <- get_acs(geography = "state",
+                        variables = c(estimate = "B02001_003"),
+                        state = "NM",
+                        year = 2019)
+
+nm_native_pop <- get_acs(geography = "state",
+                         variables = c(estimate = "B02001_004"),
+                         state = "NM",
+                         year = 2019)
+
+nm_asian_pop <- get_acs(geography = "state",
+                        variables = c(estimate = "B02001_005"),
+                        state = "NM",
+                        year = 2019)
+
+nm_hispanic_pop <- get_acs(geography = "state",
+                           variables = c(esitmate = "B03001_003"),
+                           state = "NM",
+                           year = 2019)
+
+race <- c("all", "white", "black", "native_american", "asian", "hispanic")
+total_pop <- c(2092454, 1565366, 44120, 199845, 32577, 1020817)
+percent <- c(100, (1565366/2092454)*100, (44120/2092454)*100, (199845/2092454)*100, (32577/2092454)*100, (1020817/2092454)*100)
+
+nm_race_state <- data.frame(race, total_pop, percent)
+
+nm_race_state %>% write_csv("nm_race_total.csv")
+
+```
+
+
+How does the racial composition of New Mexico compare to the race of victims? We took a statistical dive into this question, summarized at the end. This analysis particularly considers the 24 shootings with no race recorded. 
+
+```{r}
+race_vars <- load_variables(2019, "acs5", cache = TRUE)
+```
+
+```{r}
+
+NM_pop_race <- get_acs(geography="state",
+                       table = "B02001",
+                       state = "NM",
+                       year = 2019)
+
+NM_pop_race <- NM_pop_race %>%
+  left_join(race_vars, by = c("variable" = "name")) %>%
+  mutate(label = str_remove(label, "Estimate!!Total:!!")) 
+
+NM_pop_total <- NM_pop_race %>%
+  filter(variable == "B02001_001") %>%
+  select(estimate)
+
+NM_population = 2092454
+
+NM_pop_race <- NM_pop_race %>%
+  mutate(pct_total = round(estimate/NM_population * 100, digits = 2))
+
+NM_pop_race
+
+write_csv(NM_pop_race, "NM_race.csv")
+
+```
+
+
+```{r}
+NM_pop_hisp <- get_acs(geography = "state",
+                       variables = "B03001_003",
+                       year = 2019,
+                       state = "NM")
+
+NM_pop_hisp <- NM_pop_hisp %>%
+  left_join(race_vars, by = c("variable" = "name")) %>%
+  mutate(label = str_remove(label, "Estimate!!Total:!!")) 
+
+NM_pop_hisp <- NM_pop_hisp %>%
+  mutate(pct_total = round(estimate/NM_population * 100, digits = 2))
+
+write_csv(NM_pop_hisp, "NM_Hisp.csv")
+
+
+```
+
+Washington Post data
+
+```{r}
+
+police_shootings_nm <- wapo_police_shootings %>%
+  filter(state == "NM")
+
+police_shootings_nm_race <- police_shootings_nm %>%
+  group_by(race) %>%
+  summarise(NM_by_race = n()) %>%
+  mutate(pct_shootings = round(NM_by_race/134 *100, digits = 2))
+
+police_shootings_nm %>%
+  summarise(total = n())
+```
+
+
+
+```{r}
+# set up vectors for chi-squared goodness of fit test
+# var <- c(white, black, natAm, NA)
+# running race separate from Hispanic - values have to add to 100%
+
+expected_race <- c(.7481, .0211, .0955, .1353)
+observed_race <- c(28, 2, 2, 24)
+
+chisq.test(observed_race, expected_race)
+
+```
+If we take the data at face value, the difference among shootings doesn't appear to be significant, but the data doesn't meet the threshold of minimum value of 5 observations in each category for chi-squared goodness of fit test, so....
+
+```{r}
+# testing a theory - recategorizing as follows
+# one w/b category that combines white and black 
+# assign NA's to natAm for thought experiment
+
+expected_race_collapsed <- c(.7692, .2308)
+observed_race_collapsed <- c(30, 26)
+
+# chisq.test(observed_race_collapsed, expected_race_collapsed)
+# chi sq goodness of fit needs > 2 levels
+
+# WHITE/BLACK 
+# one proportion z test
+# we observe 30 shootings out of 56 shootings, and the theoretical population proportion is .77
+prop.test(30, 56, p=.77)
+# highly significant at p-value = 0.00006141
+
+# NatAm/Other (incl NA)
+# we observe 26 shootings out of 56 shootings, and the theoretical population proportion is .23
+prop.test(26, 56, .2308)
+# highly significant at p-value = 0.00006656
+
+# Actual representation of Native Americans in the database
+# 2/134, when proportion should be .0955
+prop.test(2, 134, .0955)
+# highly significant at p-value = 0.002473
+```
+
+Summary:
+
+There's a highly significant difference between the actual number of shootings of White and Black New Mexicans compared with their proportion of the population, where black and white victims are underrepresented compared with their proportions of the population.
+
+Native Americans, also, are significantly underrepresented in the database compared to their numbers in the state. This level of underrepresentation gives credence to the theory that these victims aren't identified and therefore not counted; lost to the data. 
+
+A thought experiment and statistical test - If it's true that the 24 racially unidentified police shooting victims were Native American, that would be an extremely significant *over representation* from their proportion of the state population. 
+
+This is probably not a valid use of statistics, but playing around with the one-proportion z-test below suggests that if 18 of the uncategorized victims were proven to be Native American, it would bear out the theory that Native Americans are killed in police shootings in numbers disproportion to their population in New Mexico.
+
+**This suggests a story about invisibility. Police killings of Native Americans cannot be seen if they're not counted. Nationwide statistics show Native Americans killed by police at the highest rates of any population (more below), and New Mexico's Native American population approaches 10%, yet Native Americans statistically underrepresented in the database (while 24 shootings remain undetermined for race). The problem may be going unnoticed due to uncategorized deaths.**
+
+```{r}
+# completely hypothetical running of the numbers...
+# tinkered with this to get to significant p-value to understand the threshold
+# don't call the statistics police
+prop.test(20, 56, .2308)
+```
+
+```{r}
+# HISP/nonHISP 
+# one proportion z test
+# we observe 78 shootings out of 134 shootings, and the theoretical population proportion is .49
+prop.test(78, 134, p=.49)
+# significant at p-value = 0.04075
+
+```
+
+Combining all the above... 
+
+The racial mix of victims of police shootings show Hispanics killed in numbers higher than their population in the state. The significance meets a p-value threshold of 0.05. We've already discussed that Native Americans are significantly  underrepresented in the data set.
+
+Then we have 24 shootings uncategorized for race, at least some of which are likely to be Native American or Hispanic. The underrepresentation of Native Americans is a particular red flag. National statistics from the CDC show Native Americans killed by police at the highest rate per 100,000 people, nationally and even more so in the West, yet they're missing from the police shootings data.
+
+
+|          Crude Rate per 100,000 | National | West |
+|--------------------------------:|---------:|-----:|
+| American Indian / Alaska Native |     0.40 | 0.57 |
+|                           Black |     0.25 | 0.47 |
+|                           White |     0.15 | 0.27 |
+|                           Other |     0.13 | 0.21 |
+|        Asian / Pacific Islander |     0.07 | 0.13 |
+
+Source: CDC's WISQARS Fatal Injury Mortality Report for
+* Intent or Manner = Legal Intervention
+* Cause or Mechanism = Firearm
+* US 2015-2019
+* Race: American Indian / Alaska Native
+
+https://wisqars.cdc.gov/fatal-reports
+
+Limitations:
+* data contains deaths from 2015 (set start date to match Washington Post) but ends with 2019 (end of currently available data set)
+
+Produced by: National Center for Injury Prevention and Control, CDC
+Data Source: NCHS Vital Statistics System for numbers of deaths (death certificates). Bureau of Census for population estimates.
+
+CDC data relies on statistics produced from death certificates and the included medical coding. While subject to differences in state death certificate reporting, it's the most complete death data available for the United States. It seems the NCHS is able to measure something not visible in real time. The reporting task - get statistical guidance on whether the CDC data can effectively fill in the blanks on our 24 `race = NA` deaths. 
+
+If we're relying on the CDC system, the lag in statistical reporting means there's no present moment accountability for police killing Native Americans in higher numbers (doubly so if race isn't recorded and the deaths are effectively invisible).
+
+***
+
+Why are Native Americans shot in such high proportions? Some research. 
+
+https://www.minneapolisfed.org/~/media/assets/articles/2020/fatal-encounters-between-native-americans-and-the-police/fatal-encounters-between-native-americans-and-the-police_march-2020.pdf?la=en
+
+The paper above examines fatal police shootings of Native Americans in the Ninth Federal Reserve District (Upper Midwest and Plains) and argues the "why?" includes:
+- Fatal encounters are higher in areas where tribal lands under state control. He traces the effect to a 1953 law that shifted civil and criminal jurisdiction from federal to state control. **New Mexico is not a PL280 state, so this is not a factor.**
+- Areas just outside the borders of Native American land particularly dangerous. We follow up on this idea on a map below.
+- But no definitive reason for such high rates, and for sustained increase since ~2014.
+
+Note: These factors could be equally at play in pushing Alaska to per-population shooting rates that nearly match New Mexico but no other state.
+
+***
+
+More theories, these from the Urban Institute, referencing the Fatal Encounters database (https://fatalencounters.org/). 
+
+https://www.urban.org/urban-wire/native-americans-deserve-more-attention-police-violence-conversation
+
+* can't measure the problem without lack of reliable data (such as the prevalence of NA race shootings in NM)
+* excessive alcohol consumption
+
+***
+
+## Alcohol
+
+We use data made available via the New Mexico Department of Health to understand drinking patterns in New Mexico and explore the idea that alcohol may be a factor in high rates of fatal police shootings. This survey data has limitations, particularly a small sample size. Here, we use data from 2015 to the most current available in order to both match the WaPo time frame but also bolster the robustness of the findings. This data provides a starting point but probably needs to be bolstered by additional data.
+
+NM Department of Health - Background
+- NM has the highest alcohol-related death rate in the nation (1 in 5 deaths, ages 20-64)
+
+https://www.nmhealth.org/data/view/behavior/538/
+
+https://www.nmhealth.org/publication/view/marketing/2115/#:~:text=In%20New%20Mexico%2C%20adults%20binge%20drink.&text=5%20times%20per%20month.&text=In%20a%202019%20survey%20of,school%20students%20reported%20current%20drinking.
+
+Data for Chronic Heavy Drinkers
+Chronic heavy drinkers include adult men who have more than two drinks per day and adult women who have more than one drink per day.
+
+Data Source: https://ibis.health.state.nm.us/query/result/brfss/AlcoholChrnHvy/AlcoholChrnHvyCrude11_.html
+
+
+```{r}
+nm_counties <- counties("NM")
+options(tigris_use_cache = TRUE)
+```
+
+
+```{r}
+NM_alcohol_cty <- read_csv("NM_alcohol_chronic_heavy.csv")
+
+NM_alcohol_cty <- NM_alcohol_cty %>%
+  mutate(FIPS = as.character(FIPS)) %>%
+  mutate(FIPS = str_sub(FIPS, start=3L, end=5L)) %>%
+  left_join(nm_counties, by = c("FIPS" = "COUNTYFP"))
+
+NM_alcohol_cty <- NM_alcohol_cty %>%
+  select(County, Percentage, geometry) %>%
+  mutate(Percentage = str_remove(Percentage,"%")) %>%
+  mutate(Percentage = as.numeric(Percentage))
+
+```
+
+```{r}
+st <- states()
+nm <- st %>%
+  filter(STATEFP == "35")
+options(tigris_use_cache = TRUE)
+```
+
+
+The plot below shows shootings against a county map colored by rates of chronic heavy alcohol use. The overlay lends credence to alcohol playing a role in shootings in the southeast corner of the state, as well as the band from Albuquerque running north east to the border, which we identified earlier as a cluster of Hispanic shooting victims. 
+
+```{r}
+ggplot() + 
+  geom_sf(data=nm_counties) + 
+  geom_sf(data=NM_alcohol_cty, aes(fill=Percentage, geometry=geometry)) +
+  scale_fill_viridis_b(option="magma", direction = -1) + 
+  geom_point(data = police_shootings_nm, aes(x = longitude, y= latitude), size = 1, fill = "white") +
+  theme_minimal() + 
+  ggtitle("Police Shootings and Rates of Chronic Heavy Alcohol Use")
+```
+
+
+```{r}
+natAm_areas <- native_areas(cb = TRUE)
+options(tigris_use_cache = TRUE)
+```
+
+The two plots below examine the theory tribal borders are a dangerous zone for police shootings of Native Americans. First, we look at the shootings of all races in relation to tribal lands. Below, we focus on the two known Native American shootings and the 24 NA race shootings. 
+
+```{r}
+ggplot() + 
+  geom_sf(data=nm, fill = "white") +
+  geom_sf(data=natAm_areas) + 
+#  geom_sf(data=NM_alcohol_cty, aes(fill=Percentage, geometry=geometry)) +
+  coord_sf(xlim = c(-109, -103), ylim = c(31, 37)) +
+#  scale_fill_viridis_b(option="magma", direction = -1) + 
+  geom_point(data = police_shootings_nm, aes(x = longitude, y= latitude), size = 1, color = "darkred") +
+  theme_minimal() + 
+  ggtitle("Police Shootings and Tribal Lands")
+```
+
+
+
+```{r}
+#relabeling NA race as "UNK" for filtering
+police_shootings_nm$race[is.na(police_shootings_nm$race)] <- "UNK"
+
+police_shootings_nm_NA <- police_shootings_nm %>%
+  filter(race == "UNK" | race == "N") 
+police_shootings_nm_NA
+
+```
+
+This map zeros in on police shootings where the race is recorded as Native American (2 deaths) or NA (24 deaths). It supports a theory described above that fatal police shootings occur in or at the borders of Tribal Lands, particularly in the northwest quadrant of the state. Although this does not prove these victims were Native American, it lends weight to the idea and at a minimum displays a pattern of victims in northwest New Mexico being under described. 
+
+```{r}
+ggplot() + 
+  geom_sf(data=nm, fill = "white") +
+  geom_sf(data=natAm_areas) + 
+  coord_sf(xlim = c(-109, -103), ylim = c(31, 37)) +
+  geom_point(data = police_shootings_nm_NA, aes(x = longitude, y= latitude), size = 1, color = "darkred") +
+  theme_minimal() + 
+  ggtitle("Police Shootings of NatAm & Unk Race, Tribal Lands")
+```
+
+
+
+# Gun Laws
+
+While trying to understand why some states suffer more fatal shootings than others, we looked at the differences between gun laws among the states, specifically concealed carry and open carry. In each case, states were divided into two groups for each category of gun laws -- those with unrestricted concealed or open carry, and those with any type of restriction on concealed or open carry.
+
+The analysis concludes that unrestricted (also known as permitless) open carry has a strong and quite significant influence on the rate of fatal police shootings in a state. This could be developed into a story on its own. Unrestricted concealed carry also has a significant relationship, less strong but still significant when compared with concealed carry.  
+
+States with no restrictions on open carry, have an average of 2.8 shootings per 100,000 residents, meaningfully higher than the 1.8 average shootings per 100,000 people in the states with any restriction on open carry. (In this analysis, any restriction includes states with statewide or local licensing requirements, open carry only permitted in limited circumstances, or no open carry permitted.)
+
+The next question would ask if a combination unrestricted open and concealed carry in a state has an even stronger relationship to fatal police shootings. We did not pursue the line of thinking that far.
+
+Tying gun laws to the information described above, it's interesting that the two states with the highest rate of police shootings per 100,000 people don't belong to the same gun-law groups. Alaska, with 6.4 shootings per 100,000 people is an unrestricted concealed carry and open carry state. New Mexico, also with 6.4 shootings per 100,000 people, is a restricted concealed carry state but is an unrestricted open carry state.
+
+New Mexico's flavor of unrestricted open carry would need to be examined in detail for a NM-specific story. 
+
+Concealed Carry:
+
+```{r}
+
+# Do gun laws effect the rate of shootings by state? The analysis below looks at concealed carry and open carry laws by state (leaning on Wikipedia summaries). It divides states in to two sets -- unrestricted (concealed carry or open carry) vs any level of restriction (concealed carry or open carry) and asks whether there's a significant difference in shootings between unrestricted and restricted groupings.
+
+# States with unrestricted (aka constitutional) concealed carry.
+# https://en.wikipedia.org/wiki/Concealed_carry_in_the_United_States
+
+unrestricted_concealed_carry <- wapo_police_shootings %>%
+ filter(state %in% c("AK", "AZ", "AR", "ID", "IA", "KS", "KY", "ME", "MS", "MT", "NH", "ND", "OK", "SD", "TN", "TX", "UT", "VT", "WV","WY")) %>%
+ group_by(state) %>%
+ summarise(shootings = n())
+unrestricted_concealed_carry
+
+# Inverse - states with any kind of restriction on concealed carry.
+# https://en.wikipedia.org/wiki/Concealed_carry_in_the_United_States
+
+anyrestricted_concealed_carry <- wapo_police_shootings %>%
+ filter(!state %in% c("AK", "AZ", "AR", "ID", "IA", "KS", "KY", "ME", "MS", "MT", "NH", "ND", "OK", "SD", "TN", "TX", "UT", "VT", "WV","WY")) %>%
+ group_by(state) %>%
+ summarise(shootings = n())
+
+anyrestricted_concealed_carry
+
+# calculate per 100k shootings
+state_pop_shootings_unrestricted <- state_pop_abbrev %>%
+ left_join(unrestricted_concealed_carry, by = c("abbreviation" = "state"))
+
+state_pop_shootings_unrestricted <- state_pop_shootings_unrestricted %>%
+ filter(shootings > 0) %>%
+ mutate(shootings_percapita = shootings/estimate) %>%
+ mutate(shootings_per100k = shootings_percapita * 100000) %>%
+ arrange(desc(shootings_per100k))
+
+state_pop_shootings_unrestricted
+
+mean(state_pop_shootings_unrestricted$shootings_per100k)
+
+anyrestricted_concealed_carry
+
+state_pop_shootings_anyrestrict <- state_pop_abbrev %>%
+ left_join(anyrestricted_concealed_carry, by = c("abbreviation" = "state"))
+
+state_pop_shootings_anyrestrict <- state_pop_shootings_anyrestrict %>%
+ filter(shootings > 0) %>%
+ mutate(shootings_percapita = shootings/estimate) %>%
+ mutate(shootings_per100k = shootings_percapita * 100000) %>%
+ arrange(desc(shootings_per100k))
+
+state_pop_shootings_anyrestrict
+
+mean(state_pop_shootings_anyrestrict$shootings_per100k)
+
+# We find a difference in the average (mean) rate of shootings between states with unrestricted concealed carry laws and any restrictions on concealed carry. States with unrestricted laws have an average of 2.9 shootings per 100,000 people in the database, compared with 2.0 per 100,000 people for states with any kind of restriction on concealed carry.
+
+# "Any restriction" includes states that require a license and/or permit to carry a concealed weapon, and those that do not allow carrying of concealed weapons.
+
+# Is the difference between the unrestricted and restricted groups statistically significant?
+
+# add column with boolean for restrictions on concealed carry
+state_pop_shootings_unrestricted <- state_pop_shootings_unrestricted %>%
+ add_column(conc_carry_restrict = 0)
+
+state_pop_shootings_anyrestrict <- state_pop_shootings_anyrestrict %>%
+ add_column(conc_carry_restrict = 1)
+
+shootings_concealed_carry <- rbind(state_pop_shootings_unrestricted, state_pop_shootings_anyrestrict)
+
+t.test(shootings_per100k ~ conc_carry_restrict, data = shootings_concealed_carry)
+
+# The t-test suggests that higher average rate of police shootings in states with unrestricted concealed carry laws is significant (at p-value = 0.0161).
+
+```
+
+Open Carry:
+
+```{r}
+# In a similar manner, we divide the states by whether they have unrestricted open carry laws, or any restriction on open carry, to see if it has a significant relationship to the average number of shootings by state.
+
+# https://en.wikipedia.org/wiki/Open_carry_in_the_United_States
+# add a column for open carry laws
+
+shootings_gun_laws <- shootings_concealed_carry %>%
+ add_column(open_carry_restrict = 0)
+
+# set open_carry_restrict to 1 for states that do not have "permissive" aka permitless open carry laws
+# 21 total
+
+shootings_gun_laws <- shootings_gun_laws %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "CA", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "CO", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "CT", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "DC", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "FL", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "GA", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "HI", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "IL", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "IN", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "MD", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "MA", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "MN", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "MO", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "NE", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "NJ", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "NY", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "ND", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "OR", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "PA", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "RI", 1, open_carry_restrict)) %>%
+ mutate(open_carry_restrict = ifelse(abbreviation == "SC", 1, open_carry_restrict))
+
+
+t.test(shootings_per100k ~ open_carry_restrict, data = shootings_gun_laws)
+
+```
+
